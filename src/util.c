@@ -81,6 +81,46 @@ void strlist_sort(strlist_t *l) {
         qsort(l->v, l->n, sizeof *l->v, cmp_str);
 }
 
+void pairlist_init(pairlist_t *p) {
+    p->v = NULL;
+    p->n = 0;
+    p->cap = 0;
+}
+
+void pairlist_add(pairlist_t *p, const char *name, const char *value) {
+    if (p->n == p->cap) {
+        p->cap = p->cap ? p->cap * 2 : 16;
+        p->v = xrealloc(p->v, p->cap * sizeof *p->v);
+    }
+    p->v[p->n].name = xstrdup(name);
+    p->v[p->n].value = xstrdup(value);
+    p->n++;
+}
+
+const char *pairlist_get(const pairlist_t *p, const char *name) {
+    for (size_t i = 0; i < p->n; i++)
+        if (strcmp(p->v[i].name, name) == 0)
+            return p->v[i].value;
+    return NULL;
+}
+
+void pairlist_free(pairlist_t *p) {
+    for (size_t i = 0; i < p->n; i++) {
+        free(p->v[i].name);
+        free(p->v[i].value);
+    }
+    free(p->v);
+    pairlist_init(p);
+}
+
+char *str_concat(const char *a, const char *b) {
+    size_t na = strlen(a), nb = strlen(b);
+    char *p = xmalloc(na + nb + 1);
+    memcpy(p, a, na);
+    memcpy(p + na, b, nb + 1);
+    return p;
+}
+
 char *path_join(const char *a, const char *b) {
     size_t na = strlen(a), nb = strlen(b);
     int slash = na > 0 && a[na - 1] != '/';

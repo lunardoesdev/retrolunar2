@@ -27,7 +27,24 @@ int strlist_has(const strlist_t *l, const char *s);
 void strlist_sort(strlist_t *l);
 int strlist_index(const strlist_t *l, const char *s);
 
+/* Growable list of name/value string pairs, order preserved. */
+typedef struct {
+    char *name;
+    char *value;
+} pair_t;
+
+typedef struct {
+    pair_t *v;
+    size_t n, cap;
+} pairlist_t;
+
+void pairlist_init(pairlist_t *p);
+void pairlist_add(pairlist_t *p, const char *name, const char *value);
+void pairlist_free(pairlist_t *p);
+const char *pairlist_get(const pairlist_t *p, const char *name);
+
 /* Paths and the questions the resolver asks about them. */
+char *str_concat(const char *a, const char *b); /* no separator, malloc'd */
 char *path_join(const char *a, const char *b);
 char *path_abs(const char *p); /* NULL when p is unusable */
 int is_dir(const char *p);
