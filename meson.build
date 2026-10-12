@@ -38,7 +38,8 @@ retrolunar_sources = files(
   'src/cmd_install.c',
   'src/cmd_generate.c',
   'src/cmd_env.c',
-  'src/cmd_pending.c',
+  'src/cmd_export.c',
+  'src/bin.c',
 )
 
 executable('retrolunar',
