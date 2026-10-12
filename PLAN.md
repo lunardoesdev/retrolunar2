@@ -1,274 +1,167 @@
-# retrolunar 2 — plan
+# retrolunar 2
 
-Status: v1 studied (`../retrolunar`, `../retrolunar-packages`). Everything under
-*What v1 is* and *Carried over* is read off the v1 sources; *Friction* is what the
-code actually does today; *Agenda* is the open list, undecided until the
-brainstorm fills it in.
+A package manager that prints POSIX `sh` scripts. Recipes and systems are TOML data; the
+tool resolves a target into a dependency graph and emits an auditable script that builds
+every node of that graph into its own directory under the nestdir.
 
-No line of v1 has been changed by writing this file.
+v1 (`../retrolunar`, the Lua-baked binary) stays frozen and is the porting source;
+recipes come over from `../retrolunar-packages`.
 
----
+## Shape of the thing
 
-## The scenario, simplified
+- One C binary. Lua is gone, TOML replaces it; v1's `loader.lua` and `main.c` are the
+  reference for behaviour, not for structure.
+- The output is still a plain `sh` script you can read, diff, edit and rerun.
+- Every package gets its own directory in the nestdir, so nothing may assume a shared
+  prefix holds all dependencies.
+- Freshness is content hashes plus optional environment probes, never mtimes.
 
-**In one line:** you name a package and a system; retrolunar prints a shell script
-that builds that package and everything it needs, into a prefix for that system.
+## Formats
 
-**What you type**
+Package directory:
 
-```sh
-retrolunar generate -x 'pngprobe@aarch64-android24'
+```
+zlib/
+  source.toml      where the upstream sources come from
+  generic.toml     fallback build body
+  mingw64.toml     optional: wins instead of generic.toml for one system
+  android.toml     optional: wins for a family named in a system's fallbacks
 ```
 
-**What happens, step by step**
+Exactly one build file wins: the exact system, then the system's `fallbacks` in order,
+then `generic.toml`. Fallback and override are not merged — the same rule v1 applied to
+`generic.lua` / `android.lua`.
 
-1. Find the recipes. `--packages DIR` if you gave one, otherwise
-   `~/.cache/retrolunar/packages`, cloned on first use and `git pull`ed after that.
-2. Resolve the target. `pngprobe@aarch64-android24` is one Lua file, chosen as
-   `pngprobe/aarch64-android24.lua` → the system's fallbacks (`android`) →
-   `pngprobe/generic.lua`. Loading it runs its `require` lines, which resolve its
-   dependencies the same way — so the tree walks itself.
-3. Build the queue. Every recipe that ran appended itself to a queue, dependencies
-   first, the thing you asked for last.
-4. Emit a script. One POSIX `sh` file: a header (where the nest is, a lock), then
-   one block per queued package.
-5. Run it (`-x`). Per package:
-   - **fresh?** a stamp file newer than the recipe and the system files means skip;
-   - otherwise make a scratch dir and a stage dir, `cd` into the scratch dir;
-   - **set up the toolchain** by running the system's `setup` — the compiler, the
-     flags, pkg-config paths, the cmake/meson files. Recipes never carry that.
-   - **download and unpack** the upstream source (the `source.lua` step,
-     `@source`, cached in `nest/source`);
-   - **run the build body** — plain `./configure && make && make install`
-     style shell, installing into the stage dir;
-   - **fix what staging broke** (paths inside generated `.pc` files), then publish
-     the stage dir into the real prefix and drop the stamp.
-6. Tell you where it landed: `nest/aarch64-android24/`, a normal prefix with
-   `bin/ lib/ include/ lib/pkgconfig/`. Link against it, or `pkg-config` it.
+System directory, named `system@<name>` (`system@clang-native`, `system@mingw64`,
+`system@aarch64-android24`):
 
-**Who decides what**
+```
+system@clang-native/
+  system.toml     identity: os, arch, triplets, fallbacks, tools, host system
+  autoconf.toml   [buildsystem.autoconf] -> $AUTOCONF_CONFIGURE_FLAGS
+  cmake.toml      [buildsystem.cmake]    -> $CMAKE_FLAGS, toolchain file
+  meson.toml      [buildsystem.meson]    -> $MESON_FLAGS, cross file
+  cargo.toml      cargo's cross variables
+  *.cmake, *.ini  companion files referenced by name
+```
 
-| piece | role |
+Peer files in a system directory merge into one namespace, and the same key in two of them
+is an error, never a silent override. `[system]` is the symbol table every other fragment
+reads through `${system.<key>}`; an unknown symbol fails at generate time instead of
+producing a build that quietly installs nothing.
+
+Build bodies stay shell (`build = """..."""`), as in v1. `[buildsystem.*]` fragments only
+define variables, with v1's names, so the tool never has to tell cmake from meson — and
+porting a recipe is mostly copying its body. Arbitrary computation is allowed and happens
+in the generated script (NDK discovery by glob, `command -v make`), exactly like v1's
+`setup` fragment: the tool validates structure, not what the shell computes.
+
+## Naming and CLI
+
+- Long form only in directory names. CLI and `deps` use short names: `zlib@mingw64`.
+- `@native` is the alias of the compile-time default system, same identity as
+  `zlib@<DEFAULT_SYSTEM>`, and `deps` prints it expanded.
+- A name lives in the directory name and nowhere else: values use the short form
+  (`host = "clang-native"`), package overrides are `mingw64.toml` / `android.toml`.
+
+## Dependencies as data
+
+```toml
+deps = ["zlib", "libpng@mingw64", "perl@native", "own@source"]
+```
+
+Every edge carries its own system and the graph node is (package, system), so `perl@native`
+and `perl@mingw64` are different nodes. The tool topologically sorts and detects cycles;
+build order is no longer recipe text order, and a forgotten `own@source` becomes visible
+instead of breaking a later stage silently. There is no version constraint solving and no
+conflict resolution: one version per package, moved by editing `source.toml`.
+
+## nestdir
+
+`nestdir/<pack>@<sys>/`, one directory per package, Nix-style. No shared prefix exists, so
+the environment is compiled from each node's closure:
+
+| variable | built from |
 | --- | --- |
-| `recipe.lua` (`generic.lua`) | *what* to build — the shell steps, one file per package |
-| `source.lua` | *where* the upstream tarball comes from, and how to unpack it |
-| system (`<sys>/generic.lua`) | *how* to build for that target — compiler, flags, cross files |
-| `require("dep")` | a dependency edge; requires run before `recipe()`, so order is the build order |
-| the stamp file | memory: recipe or system changed ⇒ that package rebuilds |
+| `PKG_CONFIG_PATH`, `PKG_CONFIG_LIBDIR` | each dependency's `lib/pkgconfig`, `share/pkgconfig` |
+| `CMAKE_PREFIX_PATH` | each dependency's directory (cmake config files live there) |
+| `CPPFLAGS`, `LDFLAGS` | `-I<dep>/include`, `-L<dep>/lib`, for packages shipping no `.pc` |
+| `PATH`, `LD_LIBRARY_PATH` | **native** dependencies only — a cross toolchain never goes on `PATH` |
 
-**What it deliberately does not do**
+Host tools arrive through ordinary `deps` entries pinned to `@native`. v1's implicit "the
+whole native prefix is on `PATH`" is gone, so every ported recipe is rechecked for the host
+tools it relied on without saying so.
 
-- no dependency solver, no version constraints, no conflict detection — the queue
-  is just the order the recipes asked for each other;
-- no patching upstream sources, no emulation, no checksums;
-- no two builds at once in one nest (the second one fails immediately);
-- no uninstall, no record of which files a package installed.
+Installation uses the final `--prefix` plus `DESTDIR=$STAGE`, then the staged tree is
+renamed into place. `.pc` files, cmake modules and `*-config` scripts then carry the final
+path from the start, and v1's `awk` rewrite of `$OUT` → `$PREFIX` disappears entirely.
+cargo does not fit this shape and stays behind the script escape hatch.
 
-**Same machinery, four front doors**
+## Caching and invalidation
 
-| command | for |
-| --- | --- |
-| `deps` | "what would it build?" — prints the queue, builds nothing |
-| `install` | the script, to stdout, for piping |
-| `generate` | the script to a file (`-o`), and optionally run it (`-x`) |
-| `search` | "is there anything called that?" — walks the tree only |
+sha256 implemented in-repo, no libcrypto.
 
+- **System fingerprint**: every file in the system directory (names plus content), the
+  system name, and the tool's own version. Editing any file in a system directory makes
+  every package of that system stale — that is the point of the exercise, and it is
+  stronger than v1, whose directory-mtime comparison missed in-place edits.
+- **Package fingerprint**, per node: the recipe files, `source.toml`, its own system
+  fingerprint, and its dependencies' fingerprints recursively. Cascade agreed: a changed
+  dependency rebuilds the dependent, with no "it rebuilt to the same bytes" refinement.
+- **State** lives in `nestdir/.retrolunar/state/<sys>/<pkg>.toml`, not inside package
+  directories, so a package directory stays a pure artifact.
+- **Probes** make host changes visible:
 
----
+  ```toml
+  [system]
+  probe = ["${cc} --version", "cmake --version"]
+  ```
 
-## What v1 is
+  They run in the script *after* the system setup, so values the setup computed (`$NDK`)
+  are available. Results are hashed (output plus exit status) into state, and a change marks
+  the system's packages stale. No `probe` declared means the freshness check needs no setup
+  run at all — file hashes only, v1 behaviour. A non-zero probe status is a change, not a
+  build failure.
 
-One C binary with Lua 5.5 baked in. It resolves Lua recipes into a queue and
-prints an ordinary POSIX `sh` script that builds software into a per-system
-prefix. No daemon, no solver at runtime, no hidden build state.
+## Commands
 
-- `src/main.c` (663 lines) — argument parsing, subcommand dispatch, Lua state
-  setup, `DEFAULT_SYSTEM` global, packages-tree bootstrap, `-x` execution.
-- `src/loader.lua` (583 lines) — overrides global `require`, defines
-  `recipe()` / `system()`, keeps the build queue, and holds the whole script
-  emitter (`require_script`).
-- `src/embed.py` + a meson `custom_target` (`meson.build:55-60`) turn
-  `loader.lua` into `loader_lua.c`, linked into the binary.
-- `lua-5.5.1/` is vendored and built as a static library (`meson.build:8-46`).
+- `install` — the script, to stdout.
+- `generate` — the same script, with `-o FILE`, `-x` to run it, `--cores N`.
+- `deps` — the resolved graph, leaves first, versions included.
+- `search` — what is in the tree.
+- `env <target>` — the closure's environment as `export` lines, from the same closure→env
+  code the script uses: `eval "$(retrolunar env libpng@native)"`. This is the answer to
+  "how do I build against nestdir" once there is no single prefix.
+- `export --to DIR <target | path>` — runtime shipping, not an SDK: the target's binaries
+  and shared libraries plus what they actually load, flat, ready for a flash drive. Walk
+  `NEEDED` (ELF) and the PE import table recursively, resolve by soname so versioned
+  symlink chains come along, dedupe. Parsed by the tool itself, so no binutils is required.
+  Unresolved names are classified: present in nestdir → copied; provided by the platform or
+  toolchain (bionic `libc`/`libm`/`libdl`, Windows API, `libgcc_s*`) → ignored; anything
+  else → listed, and only `--strict` makes it an error. ELF bundles get an `$ORIGIN` rpath
+  so they find their own libraries (`--no-rpath` turns it off).
 
-Flow: `require` targets → recipe tables land in the queue in dependency order →
-`require_script()` concatenates a `sh` script → `install` prints it, `generate`
-writes it (`-o`) and/or runs it (`-x`).
+## Work order
 
-### Subcommands
+- **P0** scaffolding: meson project, vendored tomlc17 plus a typed TOML reader of our own
+  that rejects unknown keys with a real message, CLI dispatch, `--help`.
+- **P1** model and resolver: system directory merge, package file selection, the dependency
+  graph, topological sort, cycle detection, `deps`.
+- **P2** environment compiler: closure to environment, per-package directories, `DESTDIR`
+  staging, publish, nest lock, script emitter.
+- **P3** state: sha256, file fingerprints, probes, skip/rebuild, `--force`, `search`.
+- **P4** test rig on the host toolchain: `system@clang-native` (clang, meson, cmake, ninja)
+  plus `m4` (configure), `zlib` (cmake), `fribidi` (meson), `libpng` (cmake, needs zlib) and
+  a `pngprobe`-style artifact that links libpng, to prove dependencies resolve across
+  separate directories.
+- **P5** `env`, `export`, then porting systems and packages from `retrolunar-packages`.
+- **P6** Android and the other cross targets last.
 
-| command | does | touches |
-| --- | --- | --- |
-| `install` | queue a target, print the script to stdout | nothing |
-| `generate` | same script; `-o FILE` (chmod 0755), `-x` runs it, `--cores N` | nest, network (fetches) |
-| `deps` | print the queue: `name@sys version`, leaves first | tree read only |
-| `search` | substring match over the tree: `name kind recipes` | tree read only |
-| `-e chunk` / `script` | run Lua, no subcommand machinery | — |
+Acceptance for P4: clean build; rerun prints `skip`; editing
+`system@clang-native/cmake-toolchain.cmake` makes everything stale; the probe links libpng
+out of `nestdir/libpng@clang-native`.
 
-Flags: `--packages DIR`, `--nest DIR`, `--cores N`, `-o/--output`, `-x/--execute`,
-`-h/--help`. Both `--nest` and `--packages` have defaults
-(`~/.cache/retrolunar/nestdir`, `~/.cache/retrolunar/packages`, the latter cloned
-from `github.com/lunardoesdev/retrolunar-packages` on first use and `git pull`ed
-afterwards).
+## Still open
 
-### The loader
-
-Three `require` forms, all resolving inside the packages roots
-(`PKGDIR`, `RETROLUNAR_LIB`, `.`):
-
-- `pack@sys` — `pack/sys.lua`, then the requested system's `recipe_fallbacks` in
-  order, then `pack/generic.lua`. `sys` resolves to `DEFAULT_SYSTEM`
-  (`clang-native` by default, `-DRETROLUNAR_DEFAULT_SYSTEM=...`), and its identity
-  is the same as `pack@<DEFAULT_SYSTEM>`.
-- `pack` — inherits the requiring module's system (`sys_stack`); at top level the C
-  default.
-- `./x`, `../x` — relative to the requiring file, then `RETROLUNAR_LIB`.
-
-`recipe(t)` attaches `file`/`dir`/`sys`/`system` and appends to the queue;
-duplicates by canonical key `pack@sys` are an error. Order is topological for
-free: `require()` calls execute before the trailing `recipe()` call, so leaves
-land first. A system that does not exist is a hard error naming the package that
-asked for it (`loader.lua:167-174`).
-
-Recipe fields that are plain strings (`version`, `git`, `tag`) are emitted as
-shell variables, so `$version` works inside a build body.
-
-### The generated script
-
-Header: `set -eu`, `NESTDIR`/`PACKAGEDIR` absolutized, `export CORES=N`,
-`mkdir -p` the nest, a hard requirement on `flock`, and a non-blocking
-`flock -n 9` on `$NESTDIR/.retrolunar.lock` held for the whole run.
-
-Per package, one `if fresh; then skip; else ...; fi` block:
-
-1. Freshness = stamp `$NESTDIR/<sys>/.retrolunar-<name>` newer than the recipe
-   file, the system file, and the system dir (any single `-nt` failing means
-   rebuild; no stamp means build).
-2. `WORK`/`OUT` as `mktemp -d` under `$NESTDIR/tmp`, `trap` cleanup, `cd "$WORK"`,
-   `PREFIX="$NESTDIR/<sys>"`, `RECIPEDIR`, `SYSDIR`, all exported.
-3. The system `setup` fragment verbatim (plain `VAR="..."` + `export` lines, may
-   use `$PREFIX`/`$OUT`/`$SYSDIR`/`$WORK`).
-4. `NATIVE_PREFIX="$NESTDIR/<DEFAULT_SYSTEM>"` goes on `PATH` / `LD_LIBRARY_PATH`,
-   so host helpers and native libs are visible without touching `PKG_CONFIG_*`.
-5. The build body verbatim (heredoc terminators normalized to column 0).
-6. Textual rewrite of staged `.pc`, `.la` and cmake package-config files from
-   `$OUT` to `$PREFIX` (`while read` + `awk`, never `sed -i`).
-7. Publish only on success: `cp -rf "$OUT"/. "$NESTDIR/<sys>/"`, `touch` the
-   stamp, drop the stage dirs, release the trap.
-
-Summary block at the end prints the nest and one line per system that got
-written, only when stdout is a tty.
-
-### Recipes and systems (the other repo)
-
-`retrolunar-packages` holds one directory per package or system at its root
-(no `packages/` prefix): `<name>/source.lua`, `<name>/generic.lua`, optional
-`<name>/<sys>.lua` or a family file such as `<name>/android.lua`, and
-`<sys>/generic.lua` plus `$SYSDIR` companions (`*.cmake`, `*.ini`). A system
-declares `recipe_fallbacks = {"android"}` so one family recipe covers all
-Android targets.
-
-Current size: 236 packages with a `source.lua`, 293 `generic.lua` files (of which
-59 are systems: `{aarch64,armv7a,i686,x86_64} × android21..35`, `i686-mingw`,
-`x86_64-mingw`, `clang-native`), 15 `android.lua` overrides, 474 `stage*.md`
-hand-off files.
-
-House rules, enforced by review: flags come from the system
-(`$CMAKE_FLAGS`, `$AUTOCONF_CONFIGURE_FLAGS`, `$MESON_FLAGS`, `$CC`, `$CFLAGS`,
-`$PREFIX`, `$OUT`, `$SYSDIR`), never hardcoded target facts; no patching upstream
-sources (rewriting our own generated files under `$OUT` is allowed, with `awk`);
-no emulation ever; serial builds unless `$CORES` is passed deliberately; no
-checksums; no network at build time except `curl` in `source.lua`.
-
----
-
-## Carried over to v2
-
-These are the parts that are load-bearing and cheap to keep:
-
-- **Script-as-artifact.** Reading, diffing and rerunning the build script is the
-  product. v2 keeps the script as the primary output even if everything around it
-  changes.
-- **Recipe tree as data, separate repo.** Nothing in the tool knows package names.
-- **Per-system prefix under one nest**, with `PREFIX` (search) and `OUT` (install
-  target) as distinct paths, and publish-on-success so a failed recipe leaves no
-  half-installed prefix.
-- **System `setup` as one readable shell fragment** that defines the entire
-  toolchain environment; build-system defaults live there, not in recipes.
-- **The `pack@sys` / bare / relative resolution model** and dependency order by
-  require order.
-- **Freshness stamps plus a documented way to force a rebuild.**
-- **Fail-fast nest lock** rather than queuing.
-- **`deps` and `search` as tree-only, nest-free commands.**
-- **The authoring rules**: system-supplied flags, no upstream patching, no
-  emulation, verifiable stage evidence.
-
-## Friction found in v1 (candidate work for v2)
-
-1. **Freshness is one `-nt` chain.** Editing anything in a system dir rebuilds
-   every package for that system; a recipe that changes behaviour without changing
-   its file (an upstream version only reachable through a dep) is invisible. No
-   content hash, no dependency-version input, no record of what a build produced.
-2. **No dependency data.** Build order is recipe text order. There are no version
-   constraints, no conflict detection, no automatic `@source` requirement — a
-   recipe that copies from `$NESTDIR/source/<name>` silently breaks if the author
-   forgets `require("own@source")`.
-3. **The emitter is hand-written string concatenation** (~190 lines of
-   `loader.lua:364-582`) with hand-rolled shell quoting (`sh_sq`). It has no tests:
-   the repo has no test suite at all, and the emitter is the thing most likely to
-   be silently wrong.
-4. **`--cores` defaults to 1 and recipes must opt in.** Deliberate, but there is
-   no per-package job policy, and `MAKEFLAGS=-j$CORES` in the systems fights the
-   "a bare `make` is fine" rule.
-5. **Lua has no `readdir`.** `search` shells out to `ls -1` through
-   `io.popen`; `abspath` shells out to `pwd`; `main.c` uses `system()` for
-   `git clone`/`git pull`. Pieces of the tool depend on the host shell quietly.
-6. **Packages tree is a floating `git clone --depth=1` in a shared cache dir**,
-   refreshed with `git pull --ff-only` on every run, with no lock and no pinning —
-   two concurrent runs and a moving upstream are both unmodelled.
-7. **One prefix per system, merged in place.** Nothing records which files a
-   package installed, so removed files linger, install order is not reversible,
-   and there is no uninstall or `list` command.
-8. **`$OUT`→`$PREFIX` rewriting is textual and directory-limited** (a fixed glob
-   list of `lib/pkgconfig`, `share/pkgconfig`, `lib/*.la`, `lib/cmake/**`,
-   `share/cmake/**`). Anything outside it keeps a stale staging path.
-9. **59 hand-copied system directories.** AGENTS.md's rule is literally "new API
-   level = copy the whole dir, rename every `NN`". The same NDK logic is repeated
-   per arch and per level; a fix has to be applied 4× or 8×.
-10. **No download cache outside the nest.** `nest/source` is per-nest, so CI and
-    every local nest refetches tarballs.
-11. **Flag parsing is duplicated three times** in `main.c` (`do_install`,
-    `do_generate`, `do_deps`/`do_search`) plus a pre-scan in `main`, kept in sync by
-    the hand-maintained `VALUE_FLAGS`/`BOOL_FLAGS` lists.
-12. **No distribution story.** The binary must be built with meson+ninja+python3
-    before anything works; there is no released artifact and no self-check.
-13. **Diagnostics end at the recipe.** A failed build is a shell exit status and a
-    log; nothing maps a failure back to the recipe line or to the stage files.
-
-## Agenda for the brainstorm
-
-Everything here is undecided. Grouped so we can strike whole groups:
-
-- **Scope of v2**: a breaking rewrite of the tool, an incremental path, or a
-  second tool that consumes the same recipes?
-- **Recipe format**: keep Lua (`require`-as-dependency, string build bodies),
-  or a declarative format the tool can inspect statically?
-- **Dependency model**: versions, constraints, optional features, conflicts,
-  `@source` as an implicit edge, cross-system dependencies.
-- **Freshness and state**: content hashes vs stamps, a manifest of installed
-  files, what invalidates what, and how a rebuild stays honest.
-- **Install model**: per-package prefix + generation/symlink switch, or the
-  current merged prefix; uninstall and `list`.
-- **Systems and toolchains**: keep 59 hand-copied dirs, generate them per API
-  level, or parameterize arch × level in one file; host-native and non-Android
-  targets beyond mingw.
-- **Concurrency**: safe parallel package builds, per-package locks, a real
-  scheduler, and how `$CORES` relates to it.
-- **Caching**: shared download cache, shared native-prefix cache, CI reuse.
-- **UX**: command set, machine-readable output (`deps --json`), what
-  `install`/`generate` should be called, script-only vs tool-driven builds.
-- **Packaging**: a released self-contained binary, bootstrap path, versions of the
-  tool itself.
-- **Testing**: emitter golden tests, recipe linting, a smoke build per system.
-- **The stage1/2/3 pipeline**: does it survive v2, and does the tool help enforce
-  it (a `check` command over the stage files)?
+- Array handling when peer TOML files merge (assumption: replace, not append).
+- Whether `env` needs a `--json` form.
