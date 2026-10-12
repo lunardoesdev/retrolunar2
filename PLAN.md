@@ -9,6 +9,73 @@ No line of v1 has been changed by writing this file.
 
 ---
 
+## The scenario, simplified
+
+**In one line:** you name a package and a system; retrolunar prints a shell script
+that builds that package and everything it needs, into a prefix for that system.
+
+**What you type**
+
+```sh
+retrolunar generate -x 'pngprobe@aarch64-android24'
+```
+
+**What happens, step by step**
+
+1. Find the recipes. `--packages DIR` if you gave one, otherwise
+   `~/.cache/retrolunar/packages`, cloned on first use and `git pull`ed after that.
+2. Resolve the target. `pngprobe@aarch64-android24` is one Lua file, chosen as
+   `pngprobe/aarch64-android24.lua` → the system's fallbacks (`android`) →
+   `pngprobe/generic.lua`. Loading it runs its `require` lines, which resolve its
+   dependencies the same way — so the tree walks itself.
+3. Build the queue. Every recipe that ran appended itself to a queue, dependencies
+   first, the thing you asked for last.
+4. Emit a script. One POSIX `sh` file: a header (where the nest is, a lock), then
+   one block per queued package.
+5. Run it (`-x`). Per package:
+   - **fresh?** a stamp file newer than the recipe and the system files means skip;
+   - otherwise make a scratch dir and a stage dir, `cd` into the scratch dir;
+   - **set up the toolchain** by running the system's `setup` — the compiler, the
+     flags, pkg-config paths, the cmake/meson files. Recipes never carry that.
+   - **download and unpack** the upstream source (the `source.lua` step,
+     `@source`, cached in `nest/source`);
+   - **run the build body** — plain `./configure && make && make install`
+     style shell, installing into the stage dir;
+   - **fix what staging broke** (paths inside generated `.pc` files), then publish
+     the stage dir into the real prefix and drop the stamp.
+6. Tell you where it landed: `nest/aarch64-android24/`, a normal prefix with
+   `bin/ lib/ include/ lib/pkgconfig/`. Link against it, or `pkg-config` it.
+
+**Who decides what**
+
+| piece | role |
+| --- | --- |
+| `recipe.lua` (`generic.lua`) | *what* to build — the shell steps, one file per package |
+| `source.lua` | *where* the upstream tarball comes from, and how to unpack it |
+| system (`<sys>/generic.lua`) | *how* to build for that target — compiler, flags, cross files |
+| `require("dep")` | a dependency edge; requires run before `recipe()`, so order is the build order |
+| the stamp file | memory: recipe or system changed ⇒ that package rebuilds |
+
+**What it deliberately does not do**
+
+- no dependency solver, no version constraints, no conflict detection — the queue
+  is just the order the recipes asked for each other;
+- no patching upstream sources, no emulation, no checksums;
+- no two builds at once in one nest (the second one fails immediately);
+- no uninstall, no record of which files a package installed.
+
+**Same machinery, four front doors**
+
+| command | for |
+| --- | --- |
+| `deps` | "what would it build?" — prints the queue, builds nothing |
+| `install` | the script, to stdout, for piping |
+| `generate` | the script to a file (`-o`), and optionally run it (`-x`) |
+| `search` | "is there anything called that?" — walks the tree only |
+
+
+---
+
 ## What v1 is
 
 One C binary with Lua 5.5 baked in. It resolves Lua recipes into a queue and
