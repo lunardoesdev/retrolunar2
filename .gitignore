@@ -1,0 +1,4 @@
+builddir/
+nestdir/
+subprojects/packagecache/
+*.o
