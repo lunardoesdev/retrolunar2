@@ -1,0 +1,162 @@
+#include "package.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+/* Keys a package file may hold besides its extra scalar fields. `build` and
+ * `deps` are the recipe; `probe` feeds freshness; `version` is the v1 field,
+ * and any other scalar is emitted as a shell variable too. */
+char *package_build_file(const char *packages, const char *name, const char *sys,
+                         const system_t *system) {
+    char *dir = path_join(packages, name);
+    char *cand = NULL;
+    if (sys != NULL && strcmp(sys, "source") != 0) {
+        char fname[512];
+        snprintf(fname, sizeof fname, "%s.toml", sys);
+        char *p = path_join(dir, fname);
+        if (is_file(p))
+            cand = p;
+        else
+            free(p);
+        if (cand == NULL && system != NULL) {
+            for (size_t i = 0; i < system->fallbacks.n && cand == NULL; i++) {
+                snprintf(fname, sizeof fname, "%s.toml", system->fallbacks.v[i]);
+                p = path_join(dir, fname);
+                if (is_file(p))
+                    cand = p;
+                else
+                    free(p);
+            }
+        }
+    }
+    if (cand == NULL) {
+        char *p = path_join(dir, "generic.toml");
+        if (is_file(p))
+            cand = p;
+        else
+            free(p);
+    }
+    free(dir);
+    return cand;
+}
+
+static int load_doc(const char *file, pkg_t *out) {
+    toml_doc_t doc;
+    if (toml_doc_load(&doc, file) != 0)
+        return -1;
+    toml_datum_t root = toml_doc_root(&doc);
+
+    int bad = 0;
+    toml_iter_t it;
+    toml_iter_init(&it, root);
+    const char *key;
+    toml_datum_t v;
+    while (toml_iter_next(&it, &key, &v)) {
+        if (strcmp(key, "deps") == 0) {
+            strlist_free(&out->deps);
+            strlist_init(&out->deps);
+            if (toml_req_strarray(root, key, NULL, &out->deps) != 0)
+                bad = 1;
+            continue;
+        }
+        if (strcmp(key, "probe") == 0) {
+            strlist_free(&out->probes);
+            strlist_init(&out->probes);
+            if (toml_req_strarray(root, key, NULL, &out->probes) != 0)
+                bad = 1;
+            else
+                out->has_probe = 1;
+            continue;
+        }
+        if (strcmp(key, "build") == 0 || strcmp(key, "script") == 0) {
+            if (v.type != TOML_STRING) {
+                toml_err(v, "'%s' must be a string", key);
+                bad = 1;
+                continue;
+            }
+            free(out->build);
+            out->build = xstrdup(v.u.str.ptr);
+            continue;
+        }
+        if (strcmp(key, "version") == 0) {
+            if (v.type != TOML_STRING) {
+                toml_err(v, "'version' must be a string");
+                bad = 1;
+                continue;
+            }
+            free(out->version);
+            out->version = xstrdup(v.u.str.ptr);
+            continue;
+        }
+        /* Everything else has to be a scalar and becomes a shell variable,
+         * which is how a v1 recipe carried `version`, `git` and `tag` into its
+         * body. A table or an array has no meaning here, so it is an error
+         * rather than something silently ignored. */
+        char *text = toml_scalar_to_str(v);
+        if (text == NULL) {
+            toml_err(v, "unknown key '%s' of type %s", key, toml_type_name(v.type));
+            bad = 1;
+            continue;
+        }
+        pairlist_add(&out->vars, key, text);
+        free(text);
+    }
+    toml_doc_free(&doc);
+    return bad ? -1 : 0;
+}
+
+int package_load(const char *packages, const char *name, const char *sys,
+                 const system_t *system, pkg_t *out) {
+    memset(out, 0, sizeof *out);
+    strlist_init(&out->deps);
+    strlist_init(&out->probes);
+    pairlist_init(&out->vars);
+    out->name = xstrdup(name);
+    out->sys = xstrdup(sys != NULL ? sys : "");
+    out->dir = path_join(packages, name);
+
+    if (!is_dir(out->dir)) {
+        fprintf(stderr, "retrolunar: no package '%s'\n", name);
+        package_free(out);
+        return -1;
+    }
+
+    char *file = NULL;
+    if (strcmp(out->sys, "source") == 0) {
+        char *p = path_join(out->dir, "source.toml");
+        if (is_file(p))
+            file = p;
+        else
+            free(p);
+    } else {
+        file = package_build_file(packages, name, sys, system);
+    }
+    if (file == NULL) {
+        fprintf(stderr,
+                "retrolunar: package '%s' has no recipe for system '%s'%s\n"
+                "  looked for %s/%s.toml, the system's fallbacks, and %s/generic.toml\n",
+                name, out->sys, strcmp(out->sys, "source") == 0 ? " (needs source.toml)" : "",
+                name, out->sys, name);
+        package_free(out);
+        return -1;
+    }
+    out->file = file;
+    if (load_doc(file, out) != 0) {
+        package_free(out);
+        return -1;
+    }
+    return 0;
+}
+
+void package_free(pkg_t *p) {
+    free(p->name);
+    free(p->sys);
+    free(p->dir);
+    free(p->file);
+    free(p->version);
+    free(p->build);
+    strlist_free(&p->deps);
+    strlist_free(&p->probes);
+    pairlist_free(&p->vars);
+    memset(p, 0, sizeof *p);
+}
