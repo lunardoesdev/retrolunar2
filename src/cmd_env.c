@@ -37,7 +37,7 @@ int cmd_env(const options_t *o) {
         printf("NESTDIR='%s'\nexport NESTDIR\n", nest);
         strlist_t lines;
         strlist_init(&lines);
-        env_lines(&g, idx, &lines);
+        env_lines(&g, idx, 1, &lines);
         for (size_t i = 0; i < lines.n; i++)
             printf("%s\n", lines.v[i]);
         strlist_free(&lines);

@@ -104,10 +104,12 @@ void env_dep_dirs(const graph_t *g, size_t idx, strlist_t *out) {
     }
 }
 
-void env_lines(const graph_t *g, size_t idx, strlist_t *out) {
+void env_lines(const graph_t *g, size_t idx, int include_self, strlist_t *out) {
     const char *mysys = g->nodes[idx].pkg.sys;
     strlist_t deps;
     strlist_init(&deps);
+    if (include_self)
+        strlist_add_own(&deps, fmt_alloc("$NESTDIR/%s", g->nodes[idx].key));
     env_dep_dirs(g, idx, &deps);
 
     strlist_t inc, lib, pkgcfg, cmake, hostpath, hostld;

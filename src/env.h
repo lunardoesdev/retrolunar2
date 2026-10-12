@@ -19,8 +19,13 @@
 #include "resolve.h"
 #include "util.h"
 
-/* Append, to `out`, the shell lines that define this node's environment. */
-void env_lines(const graph_t *g, size_t idx, strlist_t *out);
+/* Append, to `out`, the shell lines that define this node's environment.
+ *
+ * `include_self` adds the node's own directory to the search paths. A build
+ * wants it off: a package is not one of its own dependencies. A person asking
+ * `env <target>` wants it on, because they are about to use that package, and
+ * that is what v1's "the prefix is a normal prefix" used to give them. */
+void env_lines(const graph_t *g, size_t idx, int include_self, strlist_t *out);
 
 /* The dependency directories of a node, in dependency order, as shell
  * expressions ("$NESTDIR/pack@sys"). Used by `env` and the emitter's DEPS. */

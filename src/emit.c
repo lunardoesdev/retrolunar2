@@ -175,7 +175,7 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
         emit_prelude(g, i, out);
         strlist_t lines;
         strlist_init(&lines);
-        env_lines(g, i, &lines);
+        env_lines(g, i, 0, &lines);
         for (size_t k = 0; k < lines.n; k++)
             fprintf(out, "    %s\n", lines.v[k]);
         strlist_free(&lines);
@@ -193,7 +193,7 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
     emit_prelude(g, i, out);
     strlist_t lines;
     strlist_init(&lines);
-    env_lines(g, i, &lines);
+    env_lines(g, i, 0, &lines);
     for (size_t k = 0; k < lines.n; k++)
         fprintf(out, "    %s\n", lines.v[k]);
     strlist_free(&lines);
