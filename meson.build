@@ -26,7 +26,12 @@ retrolunar_sources = files(
   'src/util.c',
   'src/hash.c',
   'src/tree.c',
+  'src/toml_read.c',
+  'src/system.c',
+  'src/package.c',
+  'src/resolve.c',
   'src/cmd_search.c',
+  'src/cmd_deps.c',
   'src/cmd_pending.c',
 )
 
