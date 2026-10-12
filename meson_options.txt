@@ -1,0 +1,5 @@
+option('default_system',
+  type : 'string',
+  value : 'clang-native',
+  description : 'system a bare target resolves to, and what @native aliases',
+)
