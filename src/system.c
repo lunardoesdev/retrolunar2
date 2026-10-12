@@ -222,6 +222,8 @@ int system_load(const char *packages, const char *name, system_t *out) {
     int rc = 0;
     out->docs = xmalloc((tomls.n ? tomls.n : 1) * sizeof *out->docs);
     out->files = xmalloc((tomls.n ? tomls.n : 1) * sizeof *out->files);
+    for (size_t i = 0; i < tomls.n; i++)
+        out->files[i] = NULL;
     for (size_t i = 0; i < tomls.n; i++) {
         char *path = path_join(out->dir, tomls.v[i]);
         toml_doc_t doc;
@@ -231,17 +233,14 @@ int system_load(const char *packages, const char *name, system_t *out) {
             break;
         }
         out->docs[out->ndocs] = doc;
-        out->files[out->ndocs] = tomls.v[i];
+        out->files[out->ndocs] = path;
         out->ndocs++;
-        free(path);
     }
     if (rc == 0) {
         int bad = 0;
         for (size_t i = 0; i < out->ndocs; i++) {
-            char *path = path_join(out->dir, out->files[i]);
-            walk(toml_doc_root(&out->docs[i]), "", 0, path, out, &bad);
-            walk(toml_doc_root(&out->docs[i]), "", 1, path, out, &bad);
-            free(path);
+            walk(toml_doc_root(&out->docs[i]), "", 0, out->files[i], out, &bad);
+            walk(toml_doc_root(&out->docs[i]), "", 1, out->files[i], out, &bad);
         }
         if (bad)
             rc = -1;
@@ -254,8 +253,10 @@ int system_load(const char *packages, const char *name, system_t *out) {
 }
 
 void system_free(system_t *s) {
-    for (size_t i = 0; i < s->ndocs; i++)
+    for (size_t i = 0; i < s->ndocs; i++) {
         toml_doc_free(&s->docs[i]);
+        free(s->files[i]);
+    }
     free(s->docs);
     free(s->files);
     for (size_t i = 0; i < s->syms.n; i++) {

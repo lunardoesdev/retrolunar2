@@ -7,6 +7,18 @@ every node of that graph into its own directory under the nestdir.
 v1 (`../retrolunar`, the Lua-baked binary) stays frozen and is the porting source;
 recipes come over from `../retrolunar-packages`.
 
+## Status
+
+P0–P4 are implemented and verified on the host rig: the resolver and `deps`, the closure
+compiler and emitter (`install`, `generate -x`), fingerprints with probes and the skip path,
+and `env` and `export`. The test tree lives in `../retrolunar2-packages` and builds `m4`,
+`zlib`, `libpng`, `fribidi` and a `pngprobe` that links them.
+
+What is left: porting systems and packages from `retrolunar-packages`, and Android. The
+acceptance run of P4 (clean build, rerun skips, editing a file inside a system directory
+makes every package of that system stale, `export` producing a bundle that runs on its own)
+passes; the commit history records it.
+
 ## Shape of the thing
 
 - One C binary. Lua is gone, TOML replaces it; v1's `loader.lua` and `main.c` are the
