@@ -141,6 +141,30 @@ sha256 implemented in-repo, no libcrypto.
   else → listed, and only `--strict` makes it an error. ELF bundles get an `$ORIGIN` rpath
   so they find their own libraries (`--no-rpath` turns it off).
 
+## The package block (the P2 contract)
+
+Every block gets this prelude from the emitter, and the system fragment and the recipe body
+are written against it:
+
+| variable | meaning |
+| --- | --- |
+| `NESTDIR` | the nest root; every package directory lives directly under it |
+| `OUTPKG` | this package's final directory, `$NESTDIR/<pack>@<sys>` — what `--prefix` and `-DCMAKE_INSTALL_PREFIX` get, because config files must record the final path |
+| `STAGE` | scratch staging tree, exported as `DESTDIR` |
+| `PREFIX` | `$DESTDIR$OUTPKG` — where a hand-written install writes right now |
+| `DEPS` | the dependency directories, in topological order |
+| `WORK`, `RECIPEDIR`, `SYSDIR`, `PACKAGEDIR`, `CORES` | as in v1 |
+| `CPPFLAGS`, `LDFLAGS`, `PKG_CONFIG_PATH`, `PKG_CONFIG_LIBDIR`, `CMAKE_PREFIX_PATH`, `PATH`, `LD_LIBRARY_PATH` | built from the closure: `-I<dep>/include` and `-L<dep>/lib` per dependency, each dependency's `lib/pkgconfig` and `share/pkgconfig`, each dependency's directory for cmake, and `bin`/`lib` of the **native** dependencies only |
+
+Because `DESTDIR` is exported for the whole block, a recipe still says `make install`,
+`cmake --install build` or `meson install` — the tooling redirects it into the staging tree
+by itself, and the staging tree is put in place only on success. That is what lets a ported
+recipe body stay as it was in v1.
+
+The emitter then appends the system's own variables, so a fragment can extend what the
+closure produced: `CPPFLAGS = "$CPPFLAGS -isystem $SYSROOT/usr/include"` works because the
+closure's value is already in the environment by then.
+
 ## Work order
 
 - **P0** scaffolding: meson project, vendored tomlc17 plus a typed TOML reader of our own
