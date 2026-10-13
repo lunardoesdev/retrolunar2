@@ -102,6 +102,18 @@ PREFIXY = re.compile(r'(--?prefix=|INSTALL_PREFIX=|CMAKE_INSTALL_PREFIX=|tooldir
 
 
 # --- fixups ---------------------------------------------------------------
+# Packages that cannot be built here at all, so they are not carried: a
+# dependency the tree does not have is a package nobody can use, and a recipe
+# that does not exist is worse. They come back the day the dependency does.
+SKIP = {
+    "CGAL": "only a source recipe in v1, no build recipe",
+    "heaptrack": "needs qt6, which the tree does not have",
+    "lrzip": "needs lzo, which the tree does not have",
+    "lzop": "needs lzo, which the tree does not have",
+    "pango": "needs glib, which the tree does not have",
+    "xtensor": "needs xtl, which the tree does not have",
+}
+
 # Lines the port cannot resolve mechanically. Each one is a place where v1's single
 # shared $PREFIX had to become something specific in v2, and the reason is recorded
 # so the port stays auditable. Keys are "package/file.toml" or a package name.
@@ -1671,6 +1683,9 @@ def main():
             if os.path.isfile(g) and is_system_file(open(g).read()):
                 continue  # a system, not a package
             if not os.path.isfile(g) and not os.path.isfile(os.path.join(path, "source.lua")):
+                continue
+            if entry in SKIP:
+                REPORT.add(entry, "dropped from the port", SKIP[entry])
                 continue
             port_package(path, os.path.join(args.dst, entry))
 
