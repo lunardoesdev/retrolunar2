@@ -1258,7 +1258,7 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
         sys_lines.append('script = """\n' + script.strip("\n") + '\n"""')
     if buckets["system"]:
         sys_lines.append("")
-        sys_lines.extend(add_origin_rpath(buckets["system"], name))
+        sys_lines.extend(buckets["system"])
     with open(os.path.join(out_dir, "system.toml"), "w") as f:
         f.write("[system]\n" + "\n".join(sys_lines).rstrip("\n") + "\n")
 
@@ -1646,7 +1646,7 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
         sys_lines.append('script = """\n' + script.strip("\n") + '\n"""')
     if buckets["system"]:
         sys_lines.append("")
-        sys_lines.extend(add_origin_rpath(buckets["system"], name))
+        sys_lines.extend(buckets["system"])
     with open(os.path.join(out_dir, "system.toml"), "w") as f:
         f.write("[system]\n" + "\n".join(sys_lines).rstrip("\n") + "\n")
 
@@ -1686,6 +1686,25 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
             parts.append('%s = "%s"' % (key, toml_esc(value)))
         parts.extend(buckets[bs])
         script = tpl["script"].rstrip("\n")
+        if _host_os(buckets) != "mingw32":
+            # Every ELF link gets an $ORIGIN runtime path, in the spelling its own
+            # toolchain needs. make (and so autoconf, and libtool under it) reads
+            # `$ORIGIN` as `$O` + `RIGIN`, so it needs `$$` and the shell-level
+            # single quotes; cmake and meson hand the value to the compiler
+            # directly, so the plain backslash-escaped form is what they want.
+            flag_make = "-Wl,-rpath,'\\$\\$ORIGIN'"
+            flag_plain = "-Wl,-rpath,\\$ORIGIN"
+            if bs in ("autoconf", "make"):
+                script_extra = 'LDFLAGS="$LDFLAGS ' + flag_make + '"\n'
+            elif bs in ("cmake", "meson"):
+                script_extra = 'LDFLAGS="$LDFLAGS ' + flag_plain + '"\n'
+            else:
+                script_extra = ''
+            if script_extra:
+                script_extra = script_extra.replace('\\n', chr(10))
+                script = script_extra + script
+                REPORT.add(f"system@{name}/{bs}.toml", "links with $ORIGIN",
+                           "so an exported bundle of it is a copy")
         if bs == "cargo" and _host_os(buckets) != "mingw32":
             # Cargo reads no $LDFLAGS, so a binary it builds would carry no
             # runtime path and a bundle of it would need the launcher. The flag
