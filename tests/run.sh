@@ -72,17 +72,25 @@ PY
 echo "adapted system@$native"
 
 echo "=== every package emits a script that parses ==="
-bad=0; n=0
+bad=0; n=0; skipped=0
 for d in "$PACKAGES"/*/; do
     pkg=$(basename "$d")
     case "$pkg" in system@*) continue;; esac
     n=$((n+1))
-    if ! "$RL" generate --packages "$PACKAGES" --nest "$WORK/parse" -o "$WORK/parse.sh" "$pkg@$native" >/dev/null 2>&1; then
-        echo "  $pkg: no script"; bad=$((bad+1)); continue
+    if ! "$RL" generate --packages "$PACKAGES" --nest "$WORK/parse" -o "$WORK/parse.sh" "$pkg@$native" >"$WORK/parse.err" 2>&1; then
+        # A dependency the tree does not have yet is the port's queue, not a
+        # defect: the resolution step reports those. A script that will not parse
+        # is a defect, because one of them stops every target beside it.
+        if grep -qiE "no package|no recipe for system|no system" "$WORK/parse.err"; then
+            skipped=$((skipped+1))
+        else
+            echo "  $pkg: $(head -1 "$WORK/parse.err")"; bad=$((bad+1))
+        fi
+        continue
     fi
     sh -n "$WORK/parse.sh" 2>"$WORK/parse.err" || { echo "  $pkg: does not parse"; head -1 "$WORK/parse.err"; bad=$((bad+1)); }
 done
-echo "checked $n scripts, $bad bad"
+echo "checked $n scripts, $bad bad, $skipped without one (missing dependencies)"
 [ "$bad" -eq 0 ] || exit 1
 
 echo "=== every package resolves on three systems ==="
