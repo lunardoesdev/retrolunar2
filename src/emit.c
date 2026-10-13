@@ -112,6 +112,13 @@ static void emit_recipe_vars(pkg_t *p, FILE *out) {
         fprintf(out, "    %s=%s\n", p->vars.v[i].name, v);
         free(v);
     }
+    /* Every name the recipe defines is exported, so a step it runs sees them. */
+    if (p->version != NULL || p->vars.n > 0) {
+        fputs("    export version", out);
+        for (size_t i = 0; i < p->vars.n; i++)
+            fprintf(out, " %s", p->vars.v[i].name);
+        fputc('\n', out);
+    }
 }
 
 static void emit_state_path(const graph_t *g, size_t i, FILE *out) {

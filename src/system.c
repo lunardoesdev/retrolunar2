@@ -366,6 +366,38 @@ static void emit_quoted(FILE *out, const char *value) {
     fputc('"', out);
 }
 
+/* Names a fragment's shell part assigns. Every name a fragment defines is
+ * exported, so a fragment never has to say `export` for a program it goes on to
+ * run (cmake's toolchain file reads $ENV{CC}, for one). */
+static void collect_assignments(const char *text, strlist_t *out) {
+    for (const char *p = text; *p != '\0';) {
+        const char *eol = strchr(p, '\n');
+        size_t len = eol ? (size_t)(eol - p) : strlen(p);
+        size_t i = 0;
+        while (i < len && (p[i] == ' ' || p[i] == '\t'))
+            i++;
+        if (len - i > 7 && strncmp(p + i, "export ", 7) == 0)
+            i += 7;
+        size_t j = i;
+        while (j < len && (isalnum((unsigned char)p[j]) || p[j] == '_'))
+            j++;
+        if (j > i && j < len && p[j] == '=' && p[i] != '_' &&
+            !isdigit((unsigned char)p[i])) {
+            char name[128];
+            size_t n = j - i < sizeof(name) - 1 ? j - i : sizeof(name) - 1;
+            memcpy(name, p + i, n);
+            name[n] = '\0';
+            int seen = 0;
+            for (size_t k = 0; k < out->n; k++)
+                if (strcmp(out->v[k], name) == 0)
+                    seen = 1;
+            if (!seen)
+                strlist_add(out, name);
+        }
+        p = eol ? eol + 1 : p + len;
+    }
+}
+
 /* Does this fragment value read $name (or ${name})? */
 static int value_uses(const emit_t *e, const char *name) {
     size_t n = strlen(name);
@@ -382,6 +414,8 @@ static int value_uses(const emit_t *e, const char *name) {
 void system_emit(const system_t *s, FILE *out) {
     for (size_t f = 0; f < s->ndocs; f++) {
         const char *file = s->files[f];
+        strlist_t names;
+        strlist_init(&names);
         /* Scripts first: they are where computation happens. */
         for (size_t i = 0; i < s->nemits; i++) {
             emit_t *e = &s->emits[i];
@@ -390,13 +424,12 @@ void system_emit(const system_t *s, FILE *out) {
             char *text = system_expand(s, e->value, e->file);
             if (text == NULL)
                 continue;
+            collect_assignments(text, &names);
             fputs(text, out);
             if (text[0] != '\0' && text[strlen(text) - 1] != '\n')
                 fputc('\n', out);
             free(text);
         }
-        strlist_t names;
-        strlist_init(&names);
         /* Then the variables, with one export line for the file. A value may use
          * another value in the same file (`CMAKE_FLAGS` uses `CMAKE_MAKE_PROGRAM`),
          * and v1 wrote the definition first. Merging a fragment's appends into one
@@ -444,7 +477,8 @@ void system_emit(const system_t *s, FILE *out) {
             free(text);
             strlist_add(&names, e->name);
         }
-        /* Values written as raw shell keep their place in the fragment. */
+        /* Values written as raw shell keep their place in the fragment. They are
+         * shell, so what they define is exported like anything else. */
         for (size_t i = 0; i < s->nemits; i++) {
             emit_t *e = &s->emits[i];
             if (e->kind != EMIT_VAR || !e->multiline || strcmp(e->file, file) != 0)
@@ -452,6 +486,7 @@ void system_emit(const system_t *s, FILE *out) {
             char *text = system_expand(s, e->value, e->file);
             if (text == NULL)
                 continue;
+            collect_assignments(text, &names);
             fputs(text, out);
             if (text[0] != '\0' && text[strlen(text) - 1] != '\n')
                 fputc('\n', out);
