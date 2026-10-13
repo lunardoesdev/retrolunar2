@@ -423,6 +423,9 @@ int bin_name_is_platform(const char *name) {
         "libstdc++.so", "libc++_shared.so", "libunwind.so", "libz.so",
         "ld-android.so", "libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0",
         "librt.so.1", "libgcc_s.so", "libgcc_s.so.1", "libutil.so.1",
+        /* the dynamic loader itself: every binary names it, none ships it */
+        "ld-linux.so.2", "ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1",
+        "ld-linux-armhf.so.3", "ld-linux-riscv64-lp64d.so.1", "ld64.so.2",
         /* Windows */
         "kernel32.dll", "user32.dll", "advapi32.dll", "gdi32.dll", "shell32.dll",
         "ole32.dll", "oleaut32.dll", "ws2_32.dll", "crypt32.dll", "iphlpapi.dll",
@@ -438,6 +441,9 @@ int bin_name_is_platform(const char *name) {
     for (size_t i = 0; i < sizeof PLATFORM / sizeof PLATFORM[0]; i++)
         if (name_eq(name, PLATFORM[i]))
             return 1;
+    /* musl names its loader per architecture too, and it is never bundled. */
+    if (strncmp(name, "ld-musl-", 8) == 0)
+        return 1;
     /* Windows API sets: their real bodies live in the OS. */
     if (strncmp(name, "api-ms-win-", 11) == 0 || strncmp(name, "ext-ms-win-", 11) == 0)
         return 1;

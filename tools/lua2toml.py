@@ -1008,6 +1008,15 @@ def stage_installs(text, pkg=None):
     return text.replace("$OUTPKG", "$PREFIX")
 
 
+def _host_os(buckets):
+    """The HOST_OS a system states, if it states one."""
+    for l in buckets.get("system", []):
+        m = re.match(r'HOST_OS = "([^"]*)"', l)
+        if m:
+            return m.group(1)
+    return None
+
+
 def add_origin_rpath(lines, name):
     """Give every ELF system an $ORIGIN runtime path.
 
@@ -1274,9 +1283,25 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
         except (ValueError, OSError):
             used = set()
 
+    host_os = None
+    for l in buckets["system"]:
+        m = re.match(r'HOST_OS = "([^"]*)"', l)
+        if m:
+            host_os = m.group(1)
     for bs in ("autoconf", "cmake", "meson", "cargo", "make", "python", "xmake"):
         body = buckets[bs]
         tpl = BUILD_SYSTEMS.get(bs) if bs in used else None
+        if bs == "cargo" and tpl is not None and host_os != "mingw32":
+            # Cargo reads no $LDFLAGS, so a binary it builds would carry no
+            # runtime path and a bundle of it would need the launcher. The flag
+            # is written here, in the system's own copy of the driver, because
+            # a PE link has no $ORIGIN to speak of.
+            tpl = dict(tpl)
+            script = 'RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-rpath,\\$ORIGIN"\nexport RUSTFLAGS\n'
+            script = script.replace('\\n', chr(10))
+            tpl["script"] = script + tpl["script"]
+            REPORT.add(f"{name}/cargo.toml", "rustc is told to link with \$ORIGIN",
+                       "cargo does not read $LDFLAGS")
         if not body and tpl is None:
             continue
         parts = []
@@ -1661,6 +1686,15 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
             parts.append('%s = "%s"' % (key, toml_esc(value)))
         parts.extend(buckets[bs])
         script = tpl["script"].rstrip("\n")
+        if bs == "cargo" and _host_os(buckets) != "mingw32":
+            # Cargo reads no $LDFLAGS, so a binary it builds would carry no
+            # runtime path and a bundle of it would need the launcher. The flag
+            # lives in the system's own copy of the driver, because a PE link
+            # has no $ORIGIN to speak of.
+            script = 'RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-rpath,\\$ORIGIN"\n' \
+                     'export RUSTFLAGS\n' + script
+            REPORT.add(f"system@{name}/cargo.toml", "rustc links with $ORIGIN",
+                       "cargo does not read $LDFLAGS")
         parts.append('script = """')
         parts.append(toml_esc(script))
         parts.append('"""')
