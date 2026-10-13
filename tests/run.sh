@@ -190,7 +190,6 @@ rm -rf "$CCACHE" "$CNEST"
     { echo "cache pull failed:"; tail -6 "$WORK/cache-pull.log"; exit 1; }
 [ -x "$CNEST/m4@$native/bin/m4" ] ||
     { echo "the pulled package did not arrive:"; cat "$WORK/cache-pull.log"; exit 1; }
-[ ! -e "$CNEST/m4@$native/.retrolunar" ] || true
 case "$("$CNEST/m4@$native/bin/m4" --version | head -1)" in
 *1.4.20*) ;;
 *) echo "the pulled package does not run:"; "$CNEST/m4@$native/bin/m4" --version; exit 1 ;;
@@ -203,8 +202,10 @@ CTAMPER="$WORK/cache-tamper"
 f=$(ls "$CCACHE"/*.tar.gz | head -1)
 printf 'x' >>"$f"
 rm -rf "$CTAMPER"
+# The pull is meant to fail: the entry it wanted was not usable, so it exits
+# non-zero and says why. The check is the message, not the status.
 "$RL" cache pull --packages "$PACKAGES" --nest "$CTAMPER" --cache "$CCACHE" "m4@$native" \
-    >"$WORK/cache-tamper.log" 2>&1
+    >"$WORK/cache-tamper.log" 2>&1 || true
 grep -q 'does not match its digest' "$WORK/cache-tamper.log" ||
     { echo "a tampered entry was not refused:"; cat "$WORK/cache-tamper.log"; exit 1; }
 echo "a tampered entry was refused: $(tail -1 "$WORK/cache-tamper.log" | sed 's/^retrolunar: //')"
