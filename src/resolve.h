@@ -31,6 +31,10 @@ typedef struct {
 } graph_t;
 
 /* 0 on success. Every failure prints its reason; a partial graph is freed. */
+/* Canonical graph key of a dependency: resolves `@native` and the inheritance of
+ * a bare name. 0 on success. */
+int target_key(const char *dep, const char *caller_sys, char *out, size_t outsz);
+
 int resolve_targets(const char *packages, const char *const *targets, size_t ntargets,
                     graph_t *out);
 void graph_free(graph_t *g);

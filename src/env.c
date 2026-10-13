@@ -81,12 +81,9 @@ static int node_index(const graph_t *g, const char *key) {
 /* The graph index a dependency string refers to, or -1: bare names inherit the
  * system of the package that named them, exactly as resolution does. */
 static int dep_index(const graph_t *g, size_t idx, const char *dep) {
-    const char *at = strrchr(dep, '@');
     char key[512];
-    if (at != NULL)
-        snprintf(key, sizeof key, "%s", dep);
-    else
-        snprintf(key, sizeof key, "%s@%s", dep, g->nodes[idx].pkg.sys);
+    if (target_key(dep, g->nodes[idx].pkg.sys, key, sizeof key) != 0)
+        return -1;
     return node_index(g, key);
 }
 
@@ -166,8 +163,22 @@ void env_lines(const graph_t *g, size_t idx, int include_self, strlist_t *out) {
         const char *nm = slash + 1;
         char var[256];
         size_t k = 0;
-        for (const char *q = nm; q < at && k < sizeof var - 8; q++)
+        for (const char *q = nm; q < at && k < sizeof var - 32; q++)
             var[k++] = (*q == '-' || *q == '.' || *q == '+') ? '_' : *q;
+        /* A dependency in another system is a host tool, and its name has to say
+         * so: `tcl` and `tcl@native` in one recipe would otherwise be one
+         * variable, and one of the two would silently win. */
+        const char *syspart = at + 1;
+        if (strcmp(syspart, mysys) != 0) {
+            if (strcmp(syspart, RETROLUNAR_DEFAULT_SYSTEM) == 0) {
+                memcpy(var + k, "_HOST", 6);
+                k += 5;
+            } else {
+                var[k++] = '_';
+                for (const char *q = syspart; *q != '\0' && k < sizeof var - 9; q++)
+                    var[k++] = (*q == '-' || *q == '.' || *q == '+') ? '_' : *q;
+            }
+        }
         var[k] = '\0';
         strncat(var, "_PREFIX", sizeof var - strlen(var) - 1);
         strlist_add_own(&perdep_assign, fmt_alloc("%s=\"%s\"", var, dir));

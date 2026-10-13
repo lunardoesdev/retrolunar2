@@ -40,11 +40,27 @@ static int parse_target(const char *s, const char *default_sys, target_t *out) {
             target_free(out);
             return -1;
         }
+        /* `@native` is the native system, never the caller's: a recipe that
+         * says `tcl@native` wants the host's tcl, and in a cross build the
+         * caller's system is the target - where that tool cannot run. A bare
+         * name is the one that inherits the caller's system. */
         if (strcmp(out->sys, "native") == 0) {
             free(out->sys);
-            out->sys = xstrdup(default_sys);
+            out->sys = xstrdup(RETROLUNAR_DEFAULT_SYSTEM);
         }
     }
+    return 0;
+}
+
+/* The canonical key of a dependency, as the graph spells it: `@native` becomes
+ * the native system, a bare name inherits the caller's. Everything that looks a
+ * dependency up has to go through this, or a host dependency is invisible. */
+int target_key(const char *dep, const char *caller_sys, char *out, size_t outsz) {
+    target_t t;
+    if (parse_target(dep, caller_sys, &t) != 0)
+        return -1;
+    snprintf(out, outsz, "%s@%s", t.pack, t.sys);
+    target_free(&t);
     return 0;
 }
 

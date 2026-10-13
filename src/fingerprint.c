@@ -124,13 +124,9 @@ char *fingerprint_node(const graph_t *g, size_t i, char **done) {
         free(sysdir);
     }
     for (size_t d = 0; d < p->deps.n; d++) {
-        /* A bare dependency inherits the system of the package that named it. */
-        const char *at = strrchr(p->deps.v[d], '@');
         char key[512];
-        if (at != NULL)
-            snprintf(key, sizeof key, "%s", p->deps.v[d]);
-        else
-            snprintf(key, sizeof key, "%s@%s", p->deps.v[d], p->sys);
+        if (target_key(p->deps.v[d], p->sys, key, sizeof key) != 0)
+            continue;
         int di = node_index(g, key);
         sha256_update(&h, "dep:", 4);
         sha256_update(&h, key, strlen(key));
