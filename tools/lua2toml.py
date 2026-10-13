@@ -129,7 +129,7 @@ FIXUPS = [
      '--with-jpeg="$libjpeg_turbo_PREFIX"', "libjpeg-turbo is a declared dependency"),
     (("lcms2", "generic.toml"), r'--with-tiff="\$\{RETROLUNAR_PORT_PREFIX\}"',
      '--with-tiff="$libtiff_PREFIX"', "libtiff is a declared dependency"),
-    (("termcap", "generic.toml"), r'\$\{RETROLUNAR_PORT_PREFIX\}"', '"$OUTPKG"',
+    (("termcap", "generic.toml"), r'"\$\{RETROLUNAR_PORT_PREFIX\}"', '"$OUTPKG"',
      "the .pc file has to record the final install path"),
     (("xml-parser", "generic.toml"), r'EXPATINCPATH=\$\{RETROLUNAR_PORT_PREFIX\}/include',
      'EXPATINCPATH="$expat_PREFIX/include"', "expat is a declared dependency"),
@@ -927,13 +927,14 @@ def port_package(src_dir, dst_dir):
                     if isinstance(v, bool):
                         lines.append("%s = %s" % (k, "true" if v else "false"))
                     elif isinstance(v, list):
-                        lines.append("%s = [%s]" % (k, ", ".join('"%s"' % toml_esc(x) for x in v)))
+                        lines.append("%s = [%s]" % (
+                            k, ", ".join('"%s"' % toml_esc(stage_installs(x, name)) for x in v)))
                     else:
-                        lines.append('%s = "%s"' % (k, toml_esc(v)))
+                        lines.append('%s = "%s"' % (k, toml_esc(stage_installs(v, name))))
                 for key, label in (("pre", "pre"), ("build", "post")):
                     part = bs["pre"] if key == "pre" else bs["build"]
                     if part:
-                        text = "\n".join(part).rstrip("\n")
+                        text = stage_installs("\n".join(part).rstrip("\n"), name)
                         if name == "m4" and key == "build":
                             # v1 touches m4.1 so the man page is not regenerated.
                             # The info pages need the same, for the same reason:
@@ -962,7 +963,7 @@ def port_package(src_dir, dst_dir):
             own = name if out_name == "source.toml" else None
             body = rewrite_body(dedent(fields["build"]), f"{name}/{entry}", None, own)
             # Fixups see the shell text, with its quoting, not the TOML escaping of it.
-            body = apply_fixups(name, out_name, body)
+            body = stage_installs(apply_fixups(name, out_name, body), name)
             lines.append(body_to_toml(body))
 
         text = "\n".join(lines).rstrip("\n") + "\n"
@@ -979,6 +980,21 @@ def port_package(src_dir, dst_dir):
 
 
 # --- systems -------------------------------------------------------------
+
+def stage_installs(text, pkg=None):
+    """Point install destinations at the staging prefix.
+
+    A package directory is replaced by the tool, never written into: a step that
+    installs into $OUTPKG would be racing that, and a build that failed halfway
+    would leave a half-written package behind. Everything installs into $PREFIX,
+    which is the staged copy of the same layout, and the tool moves it into place."""
+    if pkg == "termcap":
+        # The .pc file describes where the library lives once published, and that
+        # is the path a consumer reads, so its content keeps the real one; only
+        # the file's own destination is staged.
+        return text.replace("> $OUTPKG/", "> $PREFIX/")
+    return text.replace("$OUTPKG", "$PREFIX")
+
 
 def shell_line(s):
     """Is this a line the shell has to run, rather than a plain value?"""
@@ -1127,7 +1143,7 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
                     del pending[:]
                     buckets["script"].append(line)
                     continue
-                value = rewrite_body(value, f"{name}/generic.lua", True)
+                value = stage_installs(rewrite_body(value, f"{name}/generic.lua", True))
                 # A value that uses something the shell part computed has to stay
                 # where it is: the fragment is a sequence (`_ndk_ver` is set by the
                 # NDK discovery and unset again right after `NDK` uses it), and
@@ -1293,13 +1309,14 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
                     if isinstance(v, bool):
                         lines.append("%s = %s" % (k, "true" if v else "false"))
                     elif isinstance(v, list):
-                        lines.append("%s = [%s]" % (k, ", ".join('"%s"' % toml_esc(x) for x in v)))
+                        lines.append("%s = [%s]" % (
+                            k, ", ".join('"%s"' % toml_esc(stage_installs(x, name)) for x in v)))
                     else:
-                        lines.append('%s = "%s"' % (k, toml_esc(v)))
+                        lines.append('%s = "%s"' % (k, toml_esc(stage_installs(v, name))))
                 for key, label in (("pre", "pre"), ("build", "post")):
                     part = bs["pre"] if key == "pre" else bs["build"]
                     if part:
-                        text = "\n".join(part).rstrip("\n")
+                        text = stage_installs("\n".join(part).rstrip("\n"), name)
                         lines.append('%s = """' % label)
                         lines.append(toml_esc(text))
                         lines.append('"""')
@@ -1318,7 +1335,7 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
             own = name if out_name == "source.toml" else None
             body = rewrite_body(dedent(fields["build"]), f"{name}/{entry}", None, own)
             # Fixups see the shell text, with its quoting, not the TOML escaping of it.
-            body = apply_fixups(name, out_name, body)
+            body = stage_installs(apply_fixups(name, out_name, body), name)
             lines.append(body_to_toml(body))
 
         text = "\n".join(lines).rstrip("\n") + "\n"
@@ -1335,6 +1352,21 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
 
 
 # --- systems -------------------------------------------------------------
+
+def stage_installs(text, pkg=None):
+    """Point install destinations at the staging prefix.
+
+    A package directory is replaced by the tool, never written into: a step that
+    installs into $OUTPKG would be racing that, and a build that failed halfway
+    would leave a half-written package behind. Everything installs into $PREFIX,
+    which is the staged copy of the same layout, and the tool moves it into place."""
+    if pkg == "termcap":
+        # The .pc file describes where the library lives once published, and that
+        # is the path a consumer reads, so its content keeps the real one; only
+        # the file's own destination is staged.
+        return text.replace("> $OUTPKG/", "> $PREFIX/")
+    return text.replace("$OUTPKG", "$PREFIX")
+
 
 def shell_line(s):
     """Is this a line the shell has to run, rather than a plain value?"""
@@ -1483,7 +1515,7 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
                     del pending[:]
                     buckets["script"].append(line)
                     continue
-                value = rewrite_body(value, f"{name}/generic.lua", True)
+                value = stage_installs(rewrite_body(value, f"{name}/generic.lua", True))
                 # A value that uses something the shell part computed has to stay
                 # where it is: the fragment is a sequence (`_ndk_ver` is set by the
                 # NDK discovery and unset again right after `NDK` uses it), and

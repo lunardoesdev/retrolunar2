@@ -83,7 +83,7 @@ static void emit_prelude(const graph_t *g, size_t i, FILE *out) {
             "    DESTDIR=\"$STAGE\"\n"
             "    PREFIX=\"$DESTDIR$OUTPKG\"\n"
             "    RECIPEDIR=\"$PACKAGEDIR/%s\"\n"
-            "    export OUTPKG DESTDIR PREFIX RECIPEDIR\n",
+            "    export OUTPKG PREFIX RECIPEDIR\n",
             outpkg, p->name);
     if (strcmp(p->sys, "source") != 0) {
         char *sysdir = xmalloc(strlen(p->sys) + 8);
@@ -136,15 +136,15 @@ static void emit_publish(const graph_t *g, size_t i, const char *fp, FILE *out) 
     pkg_t *p = &g->nodes[i].pkg;
     const char *ind = "    ";
     fprintf(out,
-            "    # Publish what the build made. A driver installs into $PREFIX, which\n"
-            "    # is staged; a recipe's own steps may install straight into $OUTPKG\n"
-            "    # instead (a Makefile with a prefix= variable and no DESTDIR). Both\n"
-            "    # end up in the package, and the directory was emptied before the\n"
-            "    # steps ran, so nothing older survives.\n"
+            "    # Publish the staged tree, which is the only thing the steps wrote:\n"
+            "    # a package directory is replaced, never written into, so a build\n"
+            "    # that failed halfway leaves the previous package in place.\n"
             "    mkdir -p \"$(dirname \"$OUTPKG\")\"\n"
-            "    mkdir -p \"$OUTPKG\"\n"
-            "    if [ -d \"$DESTDIR$OUTPKG\" ]; then\n"
-            "      cp -af \"$DESTDIR$OUTPKG/.\" \"$OUTPKG/\"\n"
+            "    rm -rf \"$OUTPKG\"\n"
+            "    if [ -d \"$PREFIX\" ]; then\n"
+            "      mv \"$PREFIX\" \"$OUTPKG\"\n"
+            "    else\n"
+            "      mkdir -p \"$OUTPKG\"\n"
             "    fi\n");
     fprintf(out, "%s# Record what this package was built from and in what environment.\n", ind);
     fprintf(out, "%smkdir -p \"$NESTDIR/.retrolunar/state/%s\"\n", ind, p->sys);
@@ -260,9 +260,6 @@ static void emit_bs_defaults(const pkg_t *p, const char *text, strlist_t *seen, 
 
 static void emit_build(const graph_t *g, size_t i, const system_t *sys, FILE *out) {
     pkg_t *p = &g->nodes[i].pkg;
-    /* The package's own directory is emptied before the steps run, so what a
-     * failed build leaves is what it made, not the previous build's files. */
-    fputs("    rm -rf \"$OUTPKG\"\n    mkdir -p \"$OUTPKG\"\n", out);
     if (p->buildsystem == NULL || sys == NULL) {
         emit_text(p->pre, out);
         emit_body(p, out);

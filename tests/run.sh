@@ -71,6 +71,20 @@ open(p, "w").write(s)
 PY
 echo "adapted system@$native"
 
+echo "=== every package emits a script that parses ==="
+bad=0; n=0
+for d in "$PACKAGES"/*/; do
+    pkg=$(basename "$d")
+    case "$pkg" in system@*) continue;; esac
+    n=$((n+1))
+    if ! "$RL" generate --packages "$PACKAGES" --nest "$WORK/parse" -o "$WORK/parse.sh" "$pkg@$native" >/dev/null 2>&1; then
+        echo "  $pkg: no script"; bad=$((bad+1)); continue
+    fi
+    sh -n "$WORK/parse.sh" 2>"$WORK/parse.err" || { echo "  $pkg: does not parse"; head -1 "$WORK/parse.err"; bad=$((bad+1)); }
+done
+echo "checked $n scripts, $bad bad"
+[ "$bad" -eq 0 ] || exit 1
+
 echo "=== every package resolves on three systems ==="
 fail=0; n=0
 for p in $(ls "$PACKAGES" | grep -v 'system@\|PORTING\|README\|^\.'); do
