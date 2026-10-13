@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "cmds.h"
+#include "lock.h"
 #include "emit.h"
 #include "manifest.h"
 #include "resolve.h"
@@ -135,6 +136,8 @@ int cmd_build(const options_t *o) {
     } else {
         printf("retrolunar: %s: building %s\n", m.name, target);
         rc = run_script(NULL, script, len);
+        if (rc == 0 && lock_write(&m, &g) != 0)
+            rc = 1;
         if (rc == 0 && out != NULL)
             printf("retrolunar: %s is in %s\n", key, out);
         free(script);

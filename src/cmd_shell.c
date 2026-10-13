@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 #include "cmds.h"
+#include "lock.h"
 #include "env.h"
 #include "manifest.h"
 #include "package.h"
@@ -145,6 +146,8 @@ int cmd_shell(const options_t *o) {
     }
     printf("retrolunar: %s: %zu package(s) in the environment\n", m.name, g.n);
     int rc = run_script(NULL, script, len);
+    if (rc == 0 && lock_write(&m, &g) != 0)
+        rc = 1;
     free(script);
     if (rc != 0) {
         fputs("retrolunar: the dependencies did not build\n", stderr);
