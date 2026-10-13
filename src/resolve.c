@@ -112,11 +112,19 @@ typedef struct {
 
 static int visit(visit_ctx_t *ctx, const char *pack, const char *sys, const char *wanted_by);
 
-static int visit_dep(visit_ctx_t *ctx, const char *dep, const char *sys, const char *who) {
+static int visit_dep(visit_ctx_t *ctx, const char *dep, const char *sys, const char *who,
+                     const char *pack) {
     target_t t;
     if (parse_target(dep, sys, &t) != 0) {
         fprintf(stderr, "retrolunar: %s: cannot read dependency '%s'\n", who, dep);
         return -1;
+    }
+    /* A recipe that needs its own tool for the host says `require("ragel@native")`.
+     * On the native system that resolves to the node being visited, which v1
+     * treated as already satisfied: a no-op, not a cycle. */
+    if (strcmp(t.pack, pack) == 0 && strcmp(t.sys, sys) == 0) {
+        target_free(&t);
+        return 0;
     }
     int rc = visit(ctx, t.pack, t.sys, who);
     target_free(&t);
@@ -155,7 +163,7 @@ static int visit(visit_ctx_t *ctx, const char *pack, const char *sys, const char
 
     strlist_add(&ctx->stack, key);
     for (size_t i = 0; i < pkg.deps.n; i++) {
-        if (visit_dep(ctx, pkg.deps.v[i], sys, key) != 0) {
+        if (visit_dep(ctx, pkg.deps.v[i], sys, key, pack) != 0) {
             package_free(&pkg);
             return -1;
         }
