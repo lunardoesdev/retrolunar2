@@ -465,7 +465,7 @@ fi""",
     },
     "cargo": {
         "defaults": {"CARGO_BUILD_TARGET": ""},
-        "script": """${BS_env:+$BS_env }cargo build --release --target "$CARGO_BUILD_TARGET" -j "$CORES" ${BS_no_default_features:+--no-default-features} ${BS_features:+--features "$BS_features"}
+        "script": """${BS_env:+env $BS_env }cargo build --release --target "$CARGO_BUILD_TARGET" -j "$CORES" ${BS_no_default_features:+--no-default-features} ${BS_features:+--features "$BS_features"}
 if [ "$BS_install" != "false" ]; then
   mkdir -p "$PREFIX/bin"
   for _bin in ${BS_bin:?a cargo recipe must name its bin}; do
@@ -691,7 +691,9 @@ def port_buildsystem(body, path):
             if m:
                 env = m.group(1).strip()
                 if env:
-                    fields.setdefault("env", env)
+                    # `env` sets these, and a shell word cannot carry quotes that
+                    # came out of an expansion: keep the value bare.
+                    fields.setdefault("env", re.sub(r'"([^"]*)"', r'\1', env))
                 toks = words(m.group(2)) or []
                 feats = None
                 for k, t in enumerate(toks):
