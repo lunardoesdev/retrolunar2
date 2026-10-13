@@ -245,3 +245,12 @@ char *join_sp(const strlist_t *l) {
     out[at] = '\0';
     return out;
 }
+
+/* Modification time in whole seconds, or 0 when the path is not there. Compared
+ * with >, so a missing path never looks newer than an existing one. */
+time_t mtime_seconds(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0)
+        return 0;
+    return st.st_mtime;
+}

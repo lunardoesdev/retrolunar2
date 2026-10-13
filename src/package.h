@@ -18,6 +18,7 @@ typedef struct {
     char *version;
     strlist_t deps;    /* raw edges, as written */
     char *build;       /* shell body, NULL when the file defines none */
+    char *pre, *post;  /* shell the recipe wants before and after the driver */
     char *buildsystem; /* name of the build system to drive, NULL for shell */
     int sources;       /* copy @source dependencies into the work dir first */
     strlist_t probes;  /* package-level probes */

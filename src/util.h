@@ -1,6 +1,8 @@
 /* Small shared helpers: allocation, string lists, paths, file reads.
  * No shell anywhere — v1 shelled out to `pwd` and `ls` because Lua has no
  * readdir; here the same work is done directly. */
+#include <time.h>
+
 #ifndef RETROLUNAR_UTIL_H
 #define RETROLUNAR_UTIL_H
 
@@ -55,6 +57,7 @@ int mkdirs(const char *path); /* mkdir -p */
 
 /* Whole-file read. Returns malloc'd bytes of *len bytes plus a NUL, or NULL. */
 char *read_file(const char *path, size_t *len);
+time_t mtime_seconds(const char *path); /* 0 when it does not exist */
 
 /* Directory listing, entries sorted, "." and ".." skipped into out.
  * Returns the number of entries added (0 for a missing directory too). */

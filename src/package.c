@@ -78,6 +78,17 @@ static int load_doc(const char *file, pkg_t *out) {
             out->build = xstrdup(v.u.str.ptr);
             continue;
         }
+        if (strcmp(key, "pre") == 0 || strcmp(key, "post") == 0) {
+            if (v.type != TOML_STRING) {
+                toml_err(v, "'%s' must be a string", key);
+                bad = 1;
+                continue;
+            }
+            char **slot = key[0] == 'p' && key[1] == 'r' ? &out->pre : &out->post;
+            free(*slot);
+            *slot = xstrdup(v.u.str.ptr);
+            continue;
+        }
         if (strcmp(key, "buildsystem") == 0) {
             if (v.type != TOML_STRING) {
                 toml_err(v, "'buildsystem' must be a string naming a build system");
@@ -190,6 +201,8 @@ void package_free(pkg_t *p) {
     free(p->file);
     free(p->version);
     free(p->build);
+    free(p->pre);
+    free(p->post);
     free(p->buildsystem);
     strlist_free(&p->deps);
     strlist_free(&p->probes);

@@ -25,4 +25,8 @@ char *fingerprint_dir(const char *dir);
  * sorted, so a node's dependencies already have theirs. */
 char **fingerprint_nodes(const graph_t *g);
 
+/* One node's digest. `done` holds the digests already computed for earlier nodes
+ * (they come in dependency order), so a dependency's value can be folded in. */
+char *fingerprint_node(const graph_t *g, size_t i, char **done);
+
 #endif /* RETROLUNAR_FINGERPRINT_H */

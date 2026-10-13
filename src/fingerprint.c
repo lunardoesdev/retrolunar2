@@ -83,7 +83,7 @@ static int node_index(const graph_t *g, const char *key) {
 }
 
 /* Everything a package's build reads, in one digest. */
-static char *fingerprint_node(const graph_t *g, size_t i, char **done) {
+char *fingerprint_node(const graph_t *g, size_t i, char **done) {
     pkg_t *p = &g->nodes[i].pkg;
     sha256_t h;
     sha256_init(&h);
