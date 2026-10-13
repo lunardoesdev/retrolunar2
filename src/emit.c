@@ -454,21 +454,60 @@ static void collect_inputs(const graph_t *g, size_t i, strlist_t *out, strlist_t
  * file it is stored in. Timestamps are the cheap test and the file's own mtime is
  * the stamp — the read of every input only happens when something moved. A
  * restored timestamp slips past this, which is what RETROLUNAR_VERIFY=1 is for. */
+/* A whole second of slack: when an input was written within the same second as
+ * the state file, the order of the two is not knowable from timestamps alone, and
+ * the hashes decide. Every other case is free. */
+#define MTIME_SLACK_NS 1000000000LL
+
+static int node_index_of(const graph_t *g, const char *key) {
+    for (size_t i = 0; i < g->n; i++)
+        if (strcmp(g->nodes[i].key, key) == 0)
+            return (int)i;
+    return -1;
+}
+
+/* A dependency key as the graph spells it: a bare name inherits the system. */
+static void dep_key(const pkg_t *p, const char *dep, char *out, size_t outsz) {
+    const char *at = strrchr(dep, '@');
+    if (at != NULL)
+        snprintf(out, outsz, "%s", dep);
+    else
+        snprintf(out, outsz, "%s@%s", dep, p->sys);
+}
+
+/* True when every dependency is itself unchanged: a node whose dependency is
+ * about to be rebuilt has to rebuild too, or the cascade stops at this node. */
+static int deps_unchanged(const graph_t *g, size_t i, const unsigned char *quick) {
+    const pkg_t *p = &g->nodes[i].pkg;
+    for (size_t k = 0; k < p->deps.n; k++) {
+        char key[512];
+        dep_key(p, p->deps.v[k], key, sizeof key);
+        int di = node_index_of(g, key);
+        if (di >= 0 && !quick[di])
+            return 0;
+    }
+    return 1;
+}
+
 static char *stored_when_unchanged(const graph_t *g, size_t i, const char *nestdir) {
     pkg_t *p = &g->nodes[i].pkg;
     char *state = xmalloc(strlen(nestdir) + strlen(p->sys) + strlen(p->name) + 64);
     sprintf(state, "%s/.retrolunar/state/%s/%s.toml", nestdir, p->sys, p->name);
     char *unchanged = NULL;
     if (is_file(state)) {
-        if (mtime_seconds(state) != 0) {
+        if (mtime_ns(state) != 0) {
             strlist_t ins, states;
             strlist_init(&ins);
             strlist_init(&states);
             collect_inputs(g, i, &ins, &states);
             unchanged = xstrdup(state);
-            for (size_t k = 0; k < ins.n && unchanged != NULL; k++)
-                if (mtime_seconds(ins.v[k]) > mtime_seconds(state))
+            long long stamp = mtime_ns(state);
+
+            for (size_t k = 0; k < ins.n && unchanged != NULL; k++) {
+                long long m = mtime_ns(ins.v[k]);
+                if (m > stamp || (m != 0 && stamp - m < MTIME_SLACK_NS))
                     unchanged = NULL;
+            }
             for (size_t k = 0; k < states.n && unchanged != NULL; k++) {
                 char *dep = xmalloc(strlen(nestdir) + strlen(states.v[k]) + 64);
                 const char *at = strrchr(states.v[k], '@');
@@ -476,7 +515,8 @@ static char *stored_when_unchanged(const graph_t *g, size_t i, const char *nestd
                 snprintf(pack, sizeof pack, "%.*s", (int)(at - states.v[k]), states.v[k]);
                 snprintf(sys, sizeof sys, "%s", at + 1);
                 sprintf(dep, "%s/.retrolunar/state/%s/%s.toml", nestdir, sys, pack);
-                if (mtime_seconds(dep) > mtime_seconds(state))
+                long long dm = mtime_ns(dep);
+                if (dm > stamp || (dm != 0 && stamp - dm < MTIME_SLACK_NS))
                     unchanged = NULL;
                 free(dep);
             }
@@ -526,16 +566,23 @@ int emit_script(const graph_t *g, const char *nestdir, int cores, FILE *out) {
     }
     int verify = getenv("RETROLUNAR_VERIFY") != NULL;
     char **fps = xmalloc((g->n ? g->n : 1) * sizeof *fps);
-    for (size_t i = 0; i < g->n; i++)
-        fps[i] = NULL;
+    unsigned char *quick = xmalloc(g->n ? g->n : 1);
     for (size_t i = 0; i < g->n; i++) {
-        if (!verify)
-            fps[i] = stored_when_unchanged(g, i, nestdir);
-        if (fps[i] == NULL)
-            /* Nodes come out in dependency order, so a dependency's fingerprint
-             * is already known - from its stored value when it did not move. */
-            fps[i] = fingerprint_node(g, i, fps);
+        fps[i] = NULL;
+        quick[i] = 0;
     }
+    for (size_t i = 0; i < g->n; i++) {
+        if (!verify && deps_unchanged(g, i, quick))
+            fps[i] = stored_when_unchanged(g, i, nestdir);
+        if (fps[i] != NULL) {
+            quick[i] = 1;
+            continue;
+        }
+        /* Nodes come out in dependency order, so a dependency's fingerprint is
+         * already known - from its stored value when it did not move. */
+        fps[i] = fingerprint_node(g, i, fps);
+    }
+    free(quick);
     emit_header(nestdir, g->packages, cores, out);
     for (size_t i = 0; i < g->n; i++)
         emit_block(g, i, fps, out);

@@ -57,7 +57,10 @@ int mkdirs(const char *path); /* mkdir -p */
 
 /* Whole-file read. Returns malloc'd bytes of *len bytes plus a NUL, or NULL. */
 char *read_file(const char *path, size_t *len);
-time_t mtime_seconds(const char *path); /* 0 when it does not exist */
+/* Modification time in nanoseconds since the epoch, or 0 when it is not there.
+ * Seconds are not enough: a build and the edit that triggers the next one can
+ * easily land in the same second. */
+long long mtime_ns(const char *path);
 
 /* Directory listing, entries sorted, "." and ".." skipped into out.
  * Returns the number of entries added (0 for a missing directory too). */

@@ -246,11 +246,11 @@ char *join_sp(const strlist_t *l) {
     return out;
 }
 
-/* Modification time in whole seconds, or 0 when the path is not there. Compared
- * with >, so a missing path never looks newer than an existing one. */
-time_t mtime_seconds(const char *path) {
+/* Modification time in nanoseconds, or 0 when the path is not there: a missing
+ * path then never looks newer than an existing one. */
+long long mtime_ns(const char *path) {
     struct stat st;
     if (stat(path, &st) != 0)
         return 0;
-    return st.st_mtime;
+    return (long long)st.st_mtim.tv_sec * 1000000000LL + (long long)st.st_mtim.tv_nsec;
 }
