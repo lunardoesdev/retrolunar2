@@ -18,6 +18,8 @@ typedef struct {
     char *version;
     strlist_t deps;    /* raw edges, as written */
     char *build;       /* shell body, NULL when the file defines none */
+    char *buildsystem; /* name of the build system to drive, NULL for shell */
+    int sources;       /* copy @source dependencies into the work dir first */
     strlist_t probes;  /* package-level probes */
     int has_probe;
     pairlist_t vars;   /* extra scalar fields, emitted as shell variables */

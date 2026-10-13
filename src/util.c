@@ -227,3 +227,21 @@ size_t list_dir(const char *path, strlist_t *out) {
         qsort(out->v + before, added, sizeof *out->v, cmp_str);
     return added;
 }
+
+/* One space-separated string, for the places a shell script wants a word list. */
+char *join_sp(const strlist_t *l) {
+    size_t len = 1;
+    for (size_t i = 0; i < l->n; i++)
+        len += strlen(l->v[i]) + 1;
+    char *out = xmalloc(len);
+    size_t at = 0;
+    for (size_t i = 0; i < l->n; i++) {
+        if (i > 0)
+            out[at++] = ' ';
+        size_t n = strlen(l->v[i]);
+        memcpy(out + at, l->v[i], n);
+        at += n;
+    }
+    out[at] = '\0';
+    return out;
+}

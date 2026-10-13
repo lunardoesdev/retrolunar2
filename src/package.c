@@ -78,6 +78,25 @@ static int load_doc(const char *file, pkg_t *out) {
             out->build = xstrdup(v.u.str.ptr);
             continue;
         }
+        if (strcmp(key, "buildsystem") == 0) {
+            if (v.type != TOML_STRING) {
+                toml_err(v, "'buildsystem' must be a string naming a build system");
+                bad = 1;
+                continue;
+            }
+            free(out->buildsystem);
+            out->buildsystem = xstrdup(v.u.str.ptr);
+            continue;
+        }
+        if (strcmp(key, "sources") == 0) {
+            if (v.type != TOML_BOOLEAN) {
+                toml_err(v, "'sources' must be true or false");
+                bad = 1;
+                continue;
+            }
+            out->sources = v.u.boolean;
+            continue;
+        }
         if (strcmp(key, "version") == 0) {
             if (v.type != TOML_STRING) {
                 toml_err(v, "'version' must be a string");
@@ -88,10 +107,25 @@ static int load_doc(const char *file, pkg_t *out) {
             out->version = xstrdup(v.u.str.ptr);
             continue;
         }
+        /* An array of strings is one space-separated value: a build system's
+         * script wants `-DA -DB` as one word-splittable string, not a list. */
+        if (v.type == TOML_ARRAY) {
+            strlist_t items;
+            strlist_init(&items);
+            if (toml_req_strarray(root, key, NULL, &items) != 0) {
+                bad = 1;
+                continue;
+            }
+            char *joined = join_sp(&items);
+            strlist_free(&items);
+            pairlist_add(&out->vars, key, joined);
+            free(joined);
+            continue;
+        }
         /* Everything else has to be a scalar and becomes a shell variable,
          * which is how a v1 recipe carried `version`, `git` and `tag` into its
-         * body. A table or an array has no meaning here, so it is an error
-         * rather than something silently ignored. */
+         * body. A table has no meaning here, so it is an error rather than
+         * something silently ignored. */
         char *text = toml_scalar_to_str(v);
         if (text == NULL) {
             toml_err(v, "unknown key '%s' of type %s", key, toml_type_name(v.type));
@@ -108,6 +142,7 @@ static int load_doc(const char *file, pkg_t *out) {
 int package_load(const char *packages, const char *name, const char *sys,
                  const system_t *system, pkg_t *out) {
     memset(out, 0, sizeof *out);
+    out->sources = 1; /* a build starts from the source trees it depends on */
     strlist_init(&out->deps);
     strlist_init(&out->probes);
     pairlist_init(&out->vars);
@@ -155,6 +190,7 @@ void package_free(pkg_t *p) {
     free(p->file);
     free(p->version);
     free(p->build);
+    free(p->buildsystem);
     strlist_free(&p->deps);
     strlist_free(&p->probes);
     pairlist_free(&p->vars);

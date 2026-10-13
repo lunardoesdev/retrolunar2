@@ -45,6 +45,7 @@ const char *pairlist_get(const pairlist_t *p, const char *name);
 
 /* Paths and the questions the resolver asks about them. */
 char *str_concat(const char *a, const char *b); /* no separator, malloc'd */
+char *join_sp(const strlist_t *l); /* "a b c", malloc'd; NULL list -> "" */
 char *path_join(const char *a, const char *b);
 char *path_abs(const char *p); /* NULL when p is unusable */
 int is_dir(const char *p);
