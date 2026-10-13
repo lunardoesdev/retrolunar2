@@ -41,6 +41,7 @@ retrolunar_sources = files(
   'src/cmd_env.c',
   'src/cmd_export.c',
   'src/cmd_shell.c',
+  'src/cmd_build.c',
   'src/bin.c',
 )
 

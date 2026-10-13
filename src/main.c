@@ -55,6 +55,8 @@ int main(int argc, char **argv) {
     case CMD_ENV:
         status = cmd_env(&o);
         break;
+    case CMD_BUILD:
+        return cmd_build(&o);
     case CMD_SHELL:
     case CMD_RUN:
         return cmd_shell(&o);

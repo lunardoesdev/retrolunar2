@@ -24,4 +24,11 @@ int emit_script(const graph_t *g, const char *nestdir, int cores, FILE *out);
  * it to sh. Caller frees. */
 char *emit_script_string(const graph_t *g, const char *nestdir, int cores, size_t *len);
 
+/* The same, but the node named by `out_key` publishes into `out_dir` instead of
+ * into the nest: that is `build --out DIR`, where the package the project
+ * describes lands where the project asked, and its dependencies stay where every
+ * other build put them. */
+char *emit_script_string_out(const graph_t *g, const char *nestdir, int cores,
+                             const char *out_key, const char *out_dir, size_t *len);
+
 #endif /* RETROLUNAR_EMIT_H */

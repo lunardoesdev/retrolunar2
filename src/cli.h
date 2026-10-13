@@ -16,7 +16,8 @@ enum cmd {
     CMD_ENV,
     CMD_EXPORT,
     CMD_SHELL,
-    CMD_RUN
+    CMD_RUN,
+    CMD_BUILD
 };
 
 typedef struct {

@@ -11,7 +11,7 @@ static const struct {
 } COMMANDS[] = {
     {"install", CMD_INSTALL}, {"generate", CMD_GENERATE}, {"deps", CMD_DEPS},
     {"search", CMD_SEARCH},   {"env", CMD_ENV},           {"export", CMD_EXPORT},
-    {"shell", CMD_SHELL},     {"run", CMD_RUN},
+    {"shell", CMD_SHELL},     {"run", CMD_RUN},           {"build", CMD_BUILD},
 };
 
 const char *cmd_name(enum cmd c) {
@@ -76,7 +76,7 @@ int cli_parse(int argc, char **argv, options_t *o) {
                 return -1;
             continue;
         }
-        if (strcmp(a, "--to") == 0) {
+        if (strcmp(a, "--out") == 0 || strcmp(a, "--to") == 0) {
             o->to = value_of(argc, argv, &i, a);
             if (o->to == NULL)
                 return -1;

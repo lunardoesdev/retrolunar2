@@ -12,6 +12,31 @@
 #include "fingerprint.h"
 #include "system.h"
 
+/* The run's output override, when there is one: see emit_script_string_out. */
+static const char *g_out_key = NULL;
+static const char *g_out_dir = NULL;
+
+/* A shell-quoted value, for the few places that build a line in C. */
+static char *quote(const char *value) {
+    size_t n = strlen(value) + 3;
+    char *out = xmalloc(n);
+    snprintf(out, n, "\"%s\"", value);
+    return out;
+}
+
+/* Where a node's package directory is, as the shell sees it: the nest, or the
+ * directory `build --out DIR` named for the one node it was asked about. */
+static char *out_quoted(const pkg_t *p) {
+    char key[512];
+    snprintf(key, sizeof key, "%s@%s", p->name, p->sys);
+    if (g_out_key != NULL && strcmp(key, g_out_key) == 0 && g_out_dir != NULL)
+        return quote(g_out_dir);
+    char *joined = str_concat("$NESTDIR/", key);
+    char *out = quote(joined);
+    free(joined);
+    return out;
+}
+
 /* --- shell quoting ------------------------------------------------------- */
 
 /* Single quotes for literals: nothing inside is special. */
@@ -74,17 +99,18 @@ static void emit_prelude(const graph_t *g, size_t i, FILE *out) {
     pkg_t *p = &g->nodes[i].pkg;
     char *outpkg = xmalloc(strlen(p->name) + strlen(p->sys) + 2);
     sprintf(outpkg, "%s@%s", p->name, p->sys);
+    char *out_line = out_quoted(p);
     fprintf(out,
             "    WORK=\"$(mktemp -d \"$NESTDIR/tmp/work-XXXXXX\")\"\n"
             "    STAGE=\"$(mktemp -d \"$NESTDIR/tmp/stage-XXXXXX\")\"\n"
             "    trap 'rm -rf \"$WORK\" \"$STAGE\"' EXIT\n"
             "    cd \"$WORK\"\n"
-            "    OUTPKG=\"$NESTDIR/%s\"\n"
+            "    OUTPKG=%s\n"
             "    DESTDIR=\"$STAGE\"\n"
             "    PREFIX=\"$DESTDIR$OUTPKG\"\n"
             "    RECIPEDIR=\"$PACKAGEDIR/%s\"\n"
             "    export OUTPKG PREFIX RECIPEDIR\n",
-            outpkg, p->name);
+            out_line, p->name);
     if (strcmp(p->sys, "source") != 0) {
         char *sysdir = xmalloc(strlen(p->sys) + 8);
         sprintf(sysdir, "system@%s", p->sys);
@@ -317,7 +343,9 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
         emit_read_state(out, "probes", "_probes_stored");
 
     if (!probes) {
-        fprintf(out, "  if [ \"$_stored\" = '%s' ]; then\n", fps[i]);
+        char *outpkg_here = out_quoted(p);
+        fprintf(out, "  if [ \"$_stored\" = '%s' ] && [ -d %s ]; then\n", fps[i], outpkg_here);
+        free(outpkg_here);
         fprintf(out, "    echo \"skip %s@%s (fresh)\"\n", p->name, p->sys);
         fputs("  else\n", out);
         emit_prelude(g, i, out);
@@ -349,8 +377,10 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
     if (sys != NULL)
         system_emit(sys, out);
     emit_probe_hash(g, i, out);
-    fprintf(out, "  if [ \"$_stored\" = '%s' ] && [ \"$_probes_stored\" = \"$_probes_now\" ]; then\n",
-            fps[i]);
+    char *outpkg_here = out_quoted(p);
+    fprintf(out, "  if [ \"$_stored\" = '%s' ] && [ \"$_probes_stored\" = \"$_probes_now\" ] && [ -d %s ]; then\n",
+            fps[i], outpkg_here);
+    free(outpkg_here);
     fprintf(out, "    echo \"skip %s@%s (fresh)\"\n", p->name, p->sys);
     fputs("  else\n", out);
     emit_recipe_vars(p, out);
@@ -618,4 +648,15 @@ char *emit_script_string(const graph_t *g, const char *nestdir, int cores, size_
     if (len != NULL)
         *len = size;
     return buf;
+}
+
+/* See emit.h: one node publishes elsewhere, everything else stays in the nest. */
+char *emit_script_string_out(const graph_t *g, const char *nestdir, int cores,
+                             const char *out_key, const char *out_dir, size_t *len) {
+    g_out_key = out_key;
+    g_out_dir = out_dir;
+    char *script = emit_script_string(g, nestdir, cores, len);
+    g_out_key = NULL;
+    g_out_dir = NULL;
+    return script;
 }
