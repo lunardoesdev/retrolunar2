@@ -242,3 +242,32 @@ out of `nestdir/libpng@clang-native`.
 
 - Array handling when peer TOML files merge (assumption: replace, not append).
 - Whether `env` needs a `--json` form.
+
+## Planned: what is agreed and not built yet
+
+Features he asked for, in the order they will be built. Each phase ends with the
+acceptance green, and `[repo.*]`/`[cache]` appear in the manifest only in the
+phase that reads them.
+
+1. **The manifest and the local shell.** `retrolunar.toml` in a directory is a
+   recipe: the same keys as a tree recipe (`deps`, `buildsystem`, `args`,
+   `pre`/`post`), no `version`, plus `[shell] deps` for what only the shell needs.
+   The name is the directory's. `deps` is shared: the package needs it, the shell
+   provides it. Commands: `shell` (build what is missing, then a shell with the
+   closure's environment), `run <cmd>` (the same without the interactive shell,
+   for CI), `build [--out DIR]` (the package itself, installed into DIR).
+2. **A store addressed by content.** A build's key is the fingerprint that already
+   exists (recipe text, system fragments, dependencies transitively, probe
+   output), so entries live in `store/<hash>` and two revisions of a repository
+   cannot overwrite each other, while the same package in two projects is one
+   entry. `nest/<pkg>@<sys>` becomes a friendly name pointing at the entry the
+   current lock chose; unused entries are collected on demand.
+3. **Repositories.** A list, resolved in the order the manifest declares them,
+   with the built-in `default` last so a project's repository wins. `--repo
+   NAME=URL[@REV]` adds one for a single run; `--no-default-repo` drops the
+   built-in one, which is how a build proves it does not quietly depend on it.
+   The lock file records the order, the revisions and each package's key.
+4. **A binary cache, local and remote.** Local comes free from phase 2; remote is
+   the same entry over HTTP, pulled before a build and pushed after, verified
+   against a recorded content hash. Tokens come from the environment, never from
+   a file in the project.
