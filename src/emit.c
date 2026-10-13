@@ -24,17 +24,35 @@ static char *quote(const char *value) {
     return out;
 }
 
-/* Where a node's package directory is, as the shell sees it: the nest, or the
- * directory `build --out DIR` named for the one node it was asked about. */
-static char *out_quoted(const pkg_t *p) {
+/* Where a node's package directory is, as the shell sees it: the store entry its
+ * fingerprint names, or the directory `build --out DIR` asked for.
+ *
+ * Addressing by content is what lets two revisions of a repository, or two
+ * projects, keep their own `libpng` without overwriting each other's: different
+ * inputs are different entries, and identical inputs are one entry. The name a
+ * person types is a symlink to whichever entry resolved last. */
+static char *out_quoted(const pkg_t *p, const char *fp) {
     char key[512];
     snprintf(key, sizeof key, "%s@%s", p->name, p->sys);
     if (g_out_key != NULL && strcmp(key, g_out_key) == 0 && g_out_dir != NULL)
         return quote(g_out_dir);
-    char *joined = str_concat("$NESTDIR/", key);
-    char *out = quote(joined);
-    free(joined);
-    return out;
+    char joined[1024];
+    snprintf(joined, sizeof joined, "$NESTDIR/store/%s", fp);
+    return quote(joined);
+}
+
+/* The name the node had before there was a store: a symlink to its entry now,
+ * and an existing real directory is moved in rather than thrown away. */
+static void emit_friendly_name(const pkg_t *p, const char *entry, FILE *out, const char *ind) {
+    fprintf(out,
+            "%s# %s@%s is the name this entry goes by.\n"
+            "%sif [ ! -L \"$NESTDIR/%s@%s\" ] && [ -e \"$NESTDIR/%s@%s\" ]; then\n"
+            "%s  if [ ! -e %s ]; then mv \"$NESTDIR/%s@%s\" %s; else rm -rf \"$NESTDIR/%s@%s\"; "
+            "fi\n"
+            "%sfi\n"
+            "%sln -sfn %s \"$NESTDIR/%s@%s\"\n",
+            ind, p->name, p->sys, ind, p->name, p->sys, p->name, p->sys, ind, entry, p->name, p->sys,
+            entry, p->name, p->sys, ind, ind, entry, p->name, p->sys);
 }
 
 /* --- shell quoting ------------------------------------------------------- */
@@ -95,11 +113,11 @@ static void emit_probe_hash(const graph_t *g, size_t i, FILE *out) {
     strlist_free(&probes);
 }
 
-static void emit_prelude(const graph_t *g, size_t i, FILE *out) {
+static void emit_prelude(const graph_t *g, size_t i, const char *fp, FILE *out) {
     pkg_t *p = &g->nodes[i].pkg;
     char *outpkg = xmalloc(strlen(p->name) + strlen(p->sys) + 2);
     sprintf(outpkg, "%s@%s", p->name, p->sys);
-    char *out_line = out_quoted(p);
+    char *out_line = out_quoted(p, fp);
     fprintf(out,
             "    WORK=\"$(mktemp -d \"$NESTDIR/tmp/work-XXXXXX\")\"\n"
             "    STAGE=\"$(mktemp -d \"$NESTDIR/tmp/stage-XXXXXX\")\"\n"
@@ -172,6 +190,11 @@ static void emit_publish(const graph_t *g, size_t i, const char *fp, FILE *out) 
             "    else\n"
             "      mkdir -p \"$OUTPKG\"\n"
             "    fi\n");
+    if (g_out_dir == NULL) {
+        char *entry = out_quoted(p, fp);
+        emit_friendly_name(p, entry, out, ind);
+        free(entry);
+    }
     fprintf(out, "%s# Record what this package was built from and in what environment.\n", ind);
     fprintf(out, "%smkdir -p \"$NESTDIR/.retrolunar/state/%s\"\n", ind, p->sys);
     if (node_has_probes(g, i)) {
@@ -343,12 +366,14 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
         emit_read_state(out, "probes", "_probes_stored");
 
     if (!probes) {
-        char *outpkg_here = out_quoted(p);
+        char *outpkg_here = out_quoted(p, fps[i]);
         fprintf(out, "  if [ \"$_stored\" = '%s' ] && [ -d %s ]; then\n", fps[i], outpkg_here);
-        free(outpkg_here);
         fprintf(out, "    echo \"skip %s@%s (fresh)\"\n", p->name, p->sys);
+        if (g_out_dir == NULL)
+            emit_friendly_name(p, outpkg_here, out, "    ");
+        free(outpkg_here);
         fputs("  else\n", out);
-        emit_prelude(g, i, out);
+        emit_prelude(g, i, fps[i], out);
         strlist_t lines;
         strlist_init(&lines);
         env_lines(g, i, 0, &lines);
@@ -367,7 +392,7 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
 
     /* Probes: files alone cannot tell whether this is fresh, so the block sets
      * the environment up, runs them, and only then decides. */
-    emit_prelude(g, i, out);
+    emit_prelude(g, i, fps[i], out);
     strlist_t lines;
     strlist_init(&lines);
     env_lines(g, i, 0, &lines);
@@ -377,7 +402,7 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
     if (sys != NULL)
         system_emit(sys, out);
     emit_probe_hash(g, i, out);
-    char *outpkg_here = out_quoted(p);
+    char *outpkg_here = out_quoted(p, fps[i]);
     fprintf(out, "  if [ \"$_stored\" = '%s' ] && [ \"$_probes_stored\" = \"$_probes_now\" ] && [ -d %s ]; then\n",
             fps[i], outpkg_here);
     free(outpkg_here);

@@ -11,7 +11,7 @@ static const struct {
 } COMMANDS[] = {
     {"install", CMD_INSTALL}, {"generate", CMD_GENERATE}, {"deps", CMD_DEPS},
     {"search", CMD_SEARCH},   {"env", CMD_ENV},           {"export", CMD_EXPORT},
-    {"shell", CMD_SHELL},     {"run", CMD_RUN},           {"build", CMD_BUILD},
+    {"shell", CMD_SHELL},     {"run", CMD_RUN},           {"build", CMD_BUILD},   {"gc", CMD_GC},
 };
 
 const char *cmd_name(enum cmd c) {
@@ -151,6 +151,12 @@ void cli_usage(FILE *out, const char *prog) {
             "            QUERY, case-insensitively. An empty QUERY lists everything.\n"
             "  env       print the closure's build environment as export lines:\n"
             "            eval \"$(%s env libpng@native)\"\n"
+            "  shell     build what the manifest in this directory needs, then start\n"
+            "            a shell with the closure's environment; run <cmd> is the\n"
+            "            same without the interactive shell.\n"
+            "  build     the package this directory is: into the nest, or into\n"
+            "            --out DIR, while its dependencies stay in the nest.\n"
+            "  gc        remove store entries nothing points at.\n"
             "  export    collect a target's binaries and shared libraries plus what\n"
             "            they load, flat, into --to DIR, ready to hand over.\n"
             "\n"
@@ -163,7 +169,7 @@ void cli_usage(FILE *out, const char *prog) {
             "  --cores N        job count for recipes that honour $CORES (default 1)\n"
             "  -o, --output F   write the script to F (generate)\n"
             "  -x, --execute    run the generated script (generate)\n"
-            "  --to DIR         where export writes its bundle\n"
+            "  --out DIR        where build installs the package (also --to)\n"
             "  --strict         export: treat an unresolved library as an error\n"
             "  --no-rpath       export: do not bake an $ORIGIN rpath into ELF files\n"
             "  -h, --help       show this help and exit\n"
