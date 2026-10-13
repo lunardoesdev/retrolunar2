@@ -262,6 +262,7 @@ static void emit_build(const graph_t *g, size_t i, const system_t *sys, FILE *ou
     if (p->buildsystem == NULL || sys == NULL) {
         emit_text(p->pre, out);
         emit_body(p, out);
+        emit_text(p->post, out);
         return;
     }
     static const char *const parts[] = {"pre", "script", "post"};
@@ -299,6 +300,7 @@ static void emit_build(const graph_t *g, size_t i, const system_t *sys, FILE *ou
         free(keys[k]);
     }
     /* A recipe may still add shell of its own; it runs after the standard steps. */
+    emit_text(p->post, out);
     emit_body(p, out);
 }
 

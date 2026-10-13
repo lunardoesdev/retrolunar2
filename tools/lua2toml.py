@@ -784,14 +784,22 @@ def port_buildsystem(body, path):
                 drop.add(i)
 
     elif name == "make":
+        own_steps = False
         makes = [(i, c) for i, c in cmds if c.split()[0] == "make"]
         if len(makes) >= 2 and PLAIN_MAKE.match(makes[0][1]) and \
            PLAIN_INSTALL.match(makes[1][1]):
             drop.update({makes[0][0], makes[1][0]})
         elif makes:
+            # The recipe's own make steps are its own: the driver adds none, and
+            # the steps stay where they are instead of being read for arguments
+            # (isa-l's one call carries -f, host_cpu=, prefix= and a target, which
+            # is not the driver's shape and must not be half-taken from it).
             fields["make"] = False
             fields["install"] = False
+            own_steps = True
         for i, c in cmds:
+            if own_steps:
+                break
             if not (MAKE_LINE.match(c) and c.split()[0] == "make"):
                 continue
             toks = words(c[5:].strip()) or []
@@ -853,6 +861,11 @@ def port_buildsystem(body, path):
     # Everything above the driver's own lines runs first, everything below runs
     # after it: that is what keeps a package's own preparation in order without
     # any of it being understood.
+    if not drop:
+        # The driver took nothing: the recipe's own steps are the whole body.
+        return {"name": name, "fields": fields, "pre": [],
+                "build": [l for l in lines if l.strip()], "comments": [],
+                "why": "recognised"}
     first = min(drop)
     last = max(drop)
     pre = [l for i, l in enumerate(lines)
