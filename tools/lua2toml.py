@@ -417,8 +417,11 @@ def body_to_toml(body):
 BUILD_SYSTEMS = {
     "cmake": {
         "defaults": {"CMAKE_FLAGS": "", "CMAKE_TOOLCHAIN_FILE": "",
-                     "CMAKE_GENERATOR": "Ninja"},
-        "script": """cmake -S "${BS_source_dir:-.}" -B build -G "$CMAKE_GENERATOR" ${CMAKE_TOOLCHAIN_FILE:+-DCMAKE_TOOLCHAIN_FILE="$CMAKE_TOOLCHAIN_FILE"} $CMAKE_FLAGS $BS_args
+                     },
+        # No generator is named: v1 never passed -G, and the one cmake picks
+        # itself is the one that matches the tools the system actually pinned
+        # (naming Ninja while pinning the host make is how a cross build stops).
+        "script": """cmake -S "${BS_source_dir:-.}" -B build ${CMAKE_GENERATOR:+-G "$CMAKE_GENERATOR"} ${CMAKE_TOOLCHAIN_FILE:+-DCMAKE_TOOLCHAIN_FILE="$CMAKE_TOOLCHAIN_FILE"} $CMAKE_FLAGS $BS_args
 cmake --build build --parallel "$CORES"
 cmake --install build""",
         "doc": """# A recipe says `buildsystem = "cmake"` and gives only what is its own:
@@ -496,6 +499,42 @@ fi""",
 # Cargo does not read $LDFLAGS, so a binary it builds carries no runtime path;
 # `retrolunar export` writes a launcher beside a bundle for those.""",
     },
+    "python": {
+        # No compilation: these packages are files to place, and their placement
+        # is the same in every one of them. The site directory is a fact about the
+        # system (it carries the interpreter's version), so eight recipes are not
+        # each spelling it out and going stale when the version moves.
+        # The version lives here, in the system, not in every recipe: it is a
+        # fact about this host's interpreter.
+        "defaults": {"PYTHON_SITE": "lib/python3.14/site-packages"},
+        "script": """_site="$PREFIX/${PYTHON_SITE:?the system must say where its site-packages is}"
+mkdir -p "$_site"
+if [ "${BS_whole_tree:-}" != "" ]; then
+  cp -r . "$_site/"
+else
+  for _m in ${BS_modules:?a python recipe must name its modules}; do
+    cp -r "$_m" "$_site/"
+  done
+fi
+for _l in ${BS_licenses:-}; do
+  for _m in ${BS_modules:-}; do
+    [ -f "$_l" ] && cp "$_l" "$_site/${_m##*/}/" || true
+  done
+done
+for _s in ${BS_scripts:-}; do
+  mkdir -p "$PREFIX/bin"
+  cp "${_s%%:*}" "$PREFIX/bin/${_s##*:}"
+  chmod +x "$PREFIX/bin/${_s##*:}"
+done""",
+        "doc": """# A recipe says `buildsystem = "python"` when a package is nothing but Python
+# modules to place:
+#   modules      directories to copy into site-packages
+#   licenses     files copied into each module's directory
+#   scripts      `source:name` pairs to install into bin/, made executable
+#   whole_tree   true to copy the unpacked tree itself
+# The system provides $PYTHON_SITE, `lib/python3.14/site-packages` on this host:
+# the interpreter's version belongs in one place, not in every recipe.""",
+    },
     "xmake": {
         "defaults": {"XMAKE_FLAGS": ""},
         "script": """xmake f -o "$OUTPKG" $XMAKE_FLAGS $BS_args
@@ -518,6 +557,12 @@ CARGO_LINE = re.compile(r'^((?:[A-Za-z_][A-Za-z0-9_]*="[^"]*"\s+)*)cargo\s+build
 TOUCH_FIX = re.compile(r'^(touch\s+aclocal\.m4|find\s+\.\s+-name\s+.Makefile\.in)')
 SOURCE_COPY = re.compile(r'^cp\s+-r\s+\$NESTDIR/[A-Za-z0-9._+-]+@source/\*\s+\.\s*$')
 
+
+SITE_MKDIR = re.compile(r'^mkdir -p "?\$PREFIX/([^"]*site-packages)"?$')
+SITE_MODULE = re.compile(r'^cp -r (\S+) "?\$PREFIX/[^"]*site-packages/?$')
+SITE_LICENSE = re.compile(r'^cp (\S+)((?: \S+)*) "?\$PREFIX/[^"]*site-packages/([^"/]+)(?:/[^"]*)?/?$')
+SITE_WHOLE = re.compile(r'^cp -r \$NESTDIR/[A-Za-z0-9._+-]+@source/\* "?\$PREFIX/[^"]*site-packages/?$')
+SITE_SCRIPT = re.compile(r'^cp (\S+) "?\$PREFIX/bin/([^"/]+)"?$')
 
 PLAIN_MAKE = re.compile(r'^make(?: -j"\$CORES")?$')
 PLAIN_INSTALL = re.compile(r'^make(?: -j"\$CORES")? install$')
@@ -592,13 +637,78 @@ def port_buildsystem(body, path):
         if MAKE_LINE.match(c) and c.split()[0] == "make":
             name = "make"
             break
-    if name is None:
-        return {"name": None, "fields": {}, "pre": [], "build": lines, "why": "no build system"}
 
     drop = set()
     fields = {}
+
+    # A package that is only Python modules to place: there is no build step at
+    # all, and the shape repeats across the Python half of the tree.
+    if any(SITE_MKDIR.match(c) or SITE_WHOLE.match(c) for _, c in cmds):
+        fields = {}
+        site = {"modules": [], "licenses": [], "scripts": []}
+        ok = True
+        for i, c in cmds:
+            if SITE_MKDIR.match(c) or re.match(r'^chmod \+x ', c) or c == "mkdir -p $PREFIX/bin":
+                drop.add(i)
+                continue
+            if SITE_WHOLE.match(c):
+                fields["whole_tree"] = True
+                drop.add(i)
+                continue
+            m = SITE_MODULE.match(c)
+            if m:
+                site["modules"].append(m.group(1))
+                drop.add(i)
+                continue
+            m = SITE_LICENSE.match(c)
+            if m:
+                site["licenses"].append(m.group(1))
+                for extra in m.group(2).split():
+                    site["licenses"].append(extra)
+                drop.add(i)
+                continue
+            m = SITE_SCRIPT.match(c)
+            if m:
+                site["scripts"].append("%s:%s" % (m.group(1), m.group(2)))
+                drop.add(i)
+                continue
+            ok = False
+            break
+        if ok and (site["modules"] or fields.get("whole_tree")):
+            for key, val in site.items():
+                if val:
+                    fields[key] = val
+            if not fields.get("whole_tree"):
+                fields.pop("whole_tree", None)
+            first = min(drop) if drop else 0
+            last = max(drop) if drop else 0
+            return {"name": "python", "fields": fields,
+                    "pre": [l for i, l in enumerate(lines)
+                            if i < first and l.strip() and not l.strip().startswith("#")],
+                    "build": [l for i, l in enumerate(lines)
+                              if i > last and l.strip()],
+                    "comments": [l.rstrip() for i, l in enumerate(lines)
+                                 if i < first and l.strip().startswith("#")],
+                    "why": "recognised"}
+
     toolchain = ("CC=", "AR=", "RANLIB=", "CFLAGS=", "CXXFLAGS=", "LDFLAGS=")
     install_lines = 0
+
+    if name is None:
+        # Say what the body is, not just that it is not a build system: this is
+        # the queue a person reads when deciding what to do with it.
+        text = "\n".join(c for _, c in cmds)
+        if "BLOCKED" in text or "cannot be built" in text:
+            why = "the recipe reports it cannot be built here"
+        elif re.search(r'\$CC |\$CXX ', text) or "for _s in" in text and "$CC" in text:
+            why = "a compilation of its own, not a build system"
+        elif re.search(r'python3 \S+ (configure|setup)', text):
+            why = "it bootstraps itself from python"
+        elif re.search(r'\bmake\b', text):
+            why = "make with arguments only the Makefile understands"
+        else:
+            why = "installing files is the whole recipe"
+        return {"name": None, "fields": {}, "pre": [], "build": lines, "why": why}
 
     if name == "cmake":
         for i, c in cmds:
@@ -847,6 +957,34 @@ def port_package(src_dir, dst_dir):
 
 # --- systems -------------------------------------------------------------
 
+def shell_line(s):
+    """Is this a line the shell has to run, rather than a plain value?"""
+    return (s.startswith(":") or re.match(r'^(if|for|while|case|unset|exit|_|eval)\b', s)
+            or s.endswith("fi") or s.endswith("done") or s.endswith("then") or s == "fi"
+            or s.startswith("_ndk")
+            or ("$(" in s and re.match(r'^[A-Za-z_]+="\$\(', s) is None))
+
+
+def read_names(text):
+    """Names a line reads."""
+    return {m.group(1) for m in re.finditer(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)', text)}
+
+
+def assigned_names(line):
+    """Names a shell line assigns, so a later value can be kept next to it."""
+    names = set()
+    for m in re.finditer(r'(?:^|\s|;)(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)="?', line):
+        names.add(m.group(1))
+    return names
+
+
+def references_any(text, names):
+    for m in re.finditer(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)', text):
+        if m.group(1) in names:
+            return True
+    return False
+
+
 def split_sections(setup):
     """Split a v1 setup fragment into (marker, [lines]) chunks."""
     sections = []
@@ -896,14 +1034,39 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
     fallbacks = [rename(f) for f in re.findall(r'"([^"]+)"', fields.get("recipe_fallbacks", ""))]
 
     buckets = {"system": [], "autoconf": [], "cmake": [], "meson": [], "cargo": [],
-               "make": [], "xmake": [], "script": []}
+               "make": [], "python": [], "xmake": [], "script": []}
+    script_names = set()
     pending = []
     assigns = {}
     var_kind = {}
     var_comments = {}
     var_order = []
 
-    for marker, lines in split_sections(dedent(fields.get("setup", ""))):
+    # The shell part is emitted before the values, so a name the shell reads or
+    # computes cannot be a value, and neither can a value that uses one of those
+    # (`CFLAGS` is appended to after `$SYSROOT` exists). Work that out first, over
+    # the whole fragment, then bucket with the answer in hand.
+    fragment = dedent(fields.get("setup", ""))
+    shell_names = set()
+    for marker, lines in split_sections(fragment):
+        for line in lines:
+            t = line.strip()
+            if not t or section_kind(marker, t) == "comment":
+                continue
+            if shell_line(t) or section_kind(marker, t) == "shell":
+                shell_names |= read_names(t) | assigned_names(t)
+    grow = True
+    while grow:
+        grow = False
+        for marker, lines in split_sections(fragment):
+            for line in lines:
+                t = line.strip()
+                m = re.match(r'([A-Za-z_][A-Za-z0-9_]*)="(.*)"\s*$', t)
+                if m and m.group(1) not in shell_names and references_any(m.group(2), shell_names):
+                    shell_names.add(m.group(1))
+                    grow = True
+
+    for marker, lines in split_sections(fragment):
         for line in lines:
             if not line.strip():
                 continue
@@ -928,10 +1091,9 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
             if re.match(r'^CORES=', s):
                 REPORT.add(f"{name}/generic.lua", "dropped CORES (the emitter exports it)", s)
                 continue
-            if s.startswith(":") or re.match(r'^(if|for|while|case|unset|exit|_|eval)\b', s) or \
-               s.endswith("fi") or s.endswith("done") or s.endswith("then") or s == "fi" or \
-               s.startswith("_ndk") or "$(" in s and re.match(r'^[A-Za-z_]+="\$\(', s) is None:
+            if shell_line(s):
                 buckets["script"].append(line)
+                script_names.update(assigned_names(s))
                 continue
             m = re.match(r'([A-Za-z_][A-Za-z0-9_]*)="(.*)"\s*$', s)
             if m:
@@ -943,6 +1105,15 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
                     buckets["script"].append(line)
                     continue
                 value = rewrite_body(value, f"{name}/generic.lua", True)
+                # A value that uses something the shell part computed has to stay
+                # where it is: the fragment is a sequence (`_ndk_ver` is set by the
+                # NDK discovery and unset again right after `NDK` uses it), and
+                # moving the values into their own block breaks it.
+                if var in shell_names:
+                    buckets["script"].extend(pending)
+                    del pending[:]
+                    buckets["script"].append(line)
+                    continue
                 if var not in assigns:
                     assigns[var] = []
                     var_kind[var] = kind
@@ -1023,7 +1194,7 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
         except (ValueError, OSError):
             used = set()
 
-    for bs in ("autoconf", "cmake", "meson", "cargo", "make", "xmake"):
+    for bs in ("autoconf", "cmake", "meson", "cargo", "make", "python", "xmake"):
         body = buckets[bs]
         tpl = BUILD_SYSTEMS.get(bs) if bs in used else None
         if not body and tpl is None:
@@ -1142,6 +1313,34 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
 
 # --- systems -------------------------------------------------------------
 
+def shell_line(s):
+    """Is this a line the shell has to run, rather than a plain value?"""
+    return (s.startswith(":") or re.match(r'^(if|for|while|case|unset|exit|_|eval)\b', s)
+            or s.endswith("fi") or s.endswith("done") or s.endswith("then") or s == "fi"
+            or s.startswith("_ndk")
+            or ("$(" in s and re.match(r'^[A-Za-z_]+="\$\(', s) is None))
+
+
+def read_names(text):
+    """Names a line reads."""
+    return {m.group(1) for m in re.finditer(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)', text)}
+
+
+def assigned_names(line):
+    """Names a shell line assigns, so a later value can be kept next to it."""
+    names = set()
+    for m in re.finditer(r'(?:^|\s|;)(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)="?', line):
+        names.add(m.group(1))
+    return names
+
+
+def references_any(text, names):
+    for m in re.finditer(r'\$\{?([A-Za-z_][A-Za-z0-9_]*)', text):
+        if m.group(1) in names:
+            return True
+    return False
+
+
 def split_sections(setup):
     """Split a v1 setup fragment into (marker, [lines]) chunks."""
     sections = []
@@ -1191,14 +1390,39 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
     fallbacks = [rename(f) for f in re.findall(r'"([^"]+)"', fields.get("recipe_fallbacks", ""))]
 
     buckets = {"system": [], "autoconf": [], "cmake": [], "meson": [], "cargo": [],
-               "make": [], "xmake": [], "script": []}
+               "make": [], "python": [], "xmake": [], "script": []}
+    script_names = set()
     pending = []
     assigns = {}
     var_kind = {}
     var_comments = {}
     var_order = []
 
-    for marker, lines in split_sections(dedent(fields.get("setup", ""))):
+    # The shell part is emitted before the values, so a name the shell reads or
+    # computes cannot be a value, and neither can a value that uses one of those
+    # (`CFLAGS` is appended to after `$SYSROOT` exists). Work that out first, over
+    # the whole fragment, then bucket with the answer in hand.
+    fragment = dedent(fields.get("setup", ""))
+    shell_names = set()
+    for marker, lines in split_sections(fragment):
+        for line in lines:
+            t = line.strip()
+            if not t or section_kind(marker, t) == "comment":
+                continue
+            if shell_line(t) or section_kind(marker, t) == "shell":
+                shell_names |= read_names(t) | assigned_names(t)
+    grow = True
+    while grow:
+        grow = False
+        for marker, lines in split_sections(fragment):
+            for line in lines:
+                t = line.strip()
+                m = re.match(r'([A-Za-z_][A-Za-z0-9_]*)="(.*)"\s*$', t)
+                if m and m.group(1) not in shell_names and references_any(m.group(2), shell_names):
+                    shell_names.add(m.group(1))
+                    grow = True
+
+    for marker, lines in split_sections(fragment):
         for line in lines:
             if not line.strip():
                 continue
@@ -1223,10 +1447,9 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
             if re.match(r'^CORES=', s):
                 REPORT.add(f"{name}/generic.lua", "dropped CORES (the emitter exports it)", s)
                 continue
-            if s.startswith(":") or re.match(r'^(if|for|while|case|unset|exit|_|eval)\b', s) or \
-               s.endswith("fi") or s.endswith("done") or s.endswith("then") or s == "fi" or \
-               s.startswith("_ndk") or "$(" in s and re.match(r'^[A-Za-z_]+="\$\(', s) is None:
+            if shell_line(s):
                 buckets["script"].append(line)
+                script_names.update(assigned_names(s))
                 continue
             m = re.match(r'([A-Za-z_][A-Za-z0-9_]*)="(.*)"\s*$', s)
             if m:
@@ -1238,6 +1461,15 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
                     buckets["script"].append(line)
                     continue
                 value = rewrite_body(value, f"{name}/generic.lua", True)
+                # A value that uses something the shell part computed has to stay
+                # where it is: the fragment is a sequence (`_ndk_ver` is set by the
+                # NDK discovery and unset again right after `NDK` uses it), and
+                # moving the values into their own block breaks it.
+                if var in shell_names:
+                    buckets["script"].extend(pending)
+                    del pending[:]
+                    buckets["script"].append(line)
+                    continue
                 if var not in assigns:
                     assigns[var] = []
                     var_kind[var] = kind
