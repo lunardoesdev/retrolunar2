@@ -136,14 +136,15 @@ static void emit_publish(const graph_t *g, size_t i, const char *fp, FILE *out) 
     pkg_t *p = &g->nodes[i].pkg;
     const char *ind = "    ";
     fprintf(out,
-            "    # Publish only now, and only what the build actually staged: a failed\n"
-            "    # body left the previous directory in place.\n"
+            "    # Publish what the build made. A driver installs into $PREFIX, which\n"
+            "    # is staged; a recipe's own steps may install straight into $OUTPKG\n"
+            "    # instead (a Makefile with a prefix= variable and no DESTDIR). Both\n"
+            "    # end up in the package, and the directory was emptied before the\n"
+            "    # steps ran, so nothing older survives.\n"
             "    mkdir -p \"$(dirname \"$OUTPKG\")\"\n"
-            "    rm -rf \"$OUTPKG\"\n"
+            "    mkdir -p \"$OUTPKG\"\n"
             "    if [ -d \"$DESTDIR$OUTPKG\" ]; then\n"
-            "      mv \"$DESTDIR$OUTPKG\" \"$OUTPKG\"\n"
-            "    else\n"
-            "      mkdir -p \"$OUTPKG\"\n"
+            "      cp -a \"$DESTDIR$OUTPKG/.\" \"$OUTPKG/\"\n"
             "    fi\n");
     fprintf(out, "%s# Record what this package was built from and in what environment.\n", ind);
     fprintf(out, "%smkdir -p \"$NESTDIR/.retrolunar/state/%s\"\n", ind, p->sys);
@@ -259,6 +260,9 @@ static void emit_bs_defaults(const pkg_t *p, const char *text, strlist_t *seen, 
 
 static void emit_build(const graph_t *g, size_t i, const system_t *sys, FILE *out) {
     pkg_t *p = &g->nodes[i].pkg;
+    /* The package's own directory is emptied before the steps run, so what a
+     * failed build leaves is what it made, not the previous build's files. */
+    fputs("    rm -rf \"$OUTPKG\"\n    mkdir -p \"$OUTPKG\"\n", out);
     if (p->buildsystem == NULL || sys == NULL) {
         emit_text(p->pre, out);
         emit_body(p, out);
