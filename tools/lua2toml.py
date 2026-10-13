@@ -27,6 +27,8 @@ What it does, per file:
 """
 
 import argparse
+import json
+import shlex
 import os
 import re
 import shutil
@@ -68,6 +70,11 @@ def is_system_file(text):
 
 def is_recipe_file(text):
     return re.search(r'(?m)^\s*return\s+recipe\s*\(', text) is not None
+
+
+# Which build systems the packages ask for, per build file (generic, or a system
+# name). The systems pass reads this to know which driver scripts to write.
+USES = {}
 
 
 def rename(name):
@@ -145,12 +152,55 @@ FIXUPS = [
     (("libpng", "generic.toml"), r'for _f in "\$\{RETROLUNAR_PORT_PREFIX\}/lib"/libzlib\.\*; do\n'
      r'[^\n]*\n[^\n]*\n[^\n]*\ndone\n', "",
      "the mingw libz alias moved into zlib's own recipe, where the library is"),
+    # The drivers pass these themselves from the system's own value, so v1's copy
+    # of the same flag inside the flags string would only make it appear twice.
+    (r'(^|-)mingw\d+$|^mingw\d+$',
+     r'-DCMAKE_TOOLCHAIN_FILE=\$CMAKE_TOOLCHAIN_FILE ?', "",
+     "the cmake driver passes the system's own CMAKE_TOOLCHAIN_FILE"),
+    (r'(^|-)mingw\d+$|^mingw\d+$',
+     r'--cross-file \$MESON_CROSS_FILE ?', "",
+     "the meson driver passes the system's own MESON_CROSS_FILE"),
+    (("libpng", "generic.toml"),
+     r'# mingw zlib installs as libzlib \(not libz\), but configure\'s\n'
+     r'# zlib probe hardcodes -lz \(LIBS env can\'t override it: the\n'
+     r'# probe prepends its own -lz, and a missing -l is a hard error\)\.\n'
+     r'# Alias the names in \$PREFIX so -lz resolves; harmless additive\n'
+     r'# symlinks, benefits any later -lz user too\.',
+     "# configure's zlib probe hardcodes -lz and prepends its own -lz, so LIBS cannot\n"
+     "# override it and a missing -l is a hard error. On mingw, where zlib installs as\n"
+     "# libzlib, the alias that makes -lz resolve lives in zlib's own mingw64.toml.",
+     "the comment pointed at code that is a per-system recipe now"),
     (("libpng", "generic.toml"), r' --with-zlib-prefix="\$\{RETROLUNAR_PORT_PREFIX\}"', "",
      "the closure's -I and -L flags already point at zlib's directory"),
     # Systems: the same flag, in the two mingw cmake fragments.
     (r'^(mingw32|mingw64)$', r'-DZLIB_ROOT=\$\{RETROLUNAR_PORT_SYSTEM_PREFIX\}', "",
      "CMAKE_PREFIX_PATH from the closure points at the dependency directories already"),
 ]
+
+
+# Files that have no v1 original because v1 did not need one: a recipe's
+# platform-specific part, which v1 inlined behind a runtime test of the platform.
+# In v2 it is the recipe of that system, and a regeneration must reproduce it.
+EXTRA_FILES = {
+    ("zlib", "mingw64.toml"): """deps = ["zlib@source"]
+buildsystem = "cmake"
+# Only the library is used; the examples cannot run on the build host.
+args = ["-DZLIB_BUILD_EXAMPLES=OFF"]
+
+# mingw zlib installs as libzlib, while configure scripts hardcode -lz, so the
+# alias has to exist. It belongs in zlib's own directory, which is where the
+# library is. v1 wrote it into the shared prefix (that is what prefixes were for)
+# behind a runtime test for the platform; a recipe only the mingw system uses
+# needs no test.
+post = \"\"\"
+for _f in \"$PREFIX/lib\"/libzlib.*; do
+  [ -f \"$_f\" ] || continue
+  _ext=\"${_f##*libzlib}\"
+  [ -f \"$PREFIX/lib/libz$_ext\" ] || ln -s \"libzlib$_ext\" \"$PREFIX/lib/libz$_ext\"
+done
+\"\"\"
+""",
+}
 
 
 def apply_fixups(pkg, fname, text):
@@ -351,7 +401,336 @@ def body_to_toml(body):
     return 'build = """\n' + toml_esc(text) + '\n"""\n'
 
 
+
+# --- build systems -------------------------------------------------------
+# What a build system is lives in the systems, not here: these templates are the
+# text the port writes into each system's <name>.toml, and after that the file
+# belongs to the system. Nothing in the C tool knows what cmake is.
+
+BUILD_SYSTEMS = {
+    "cmake": {
+        "defaults": {"CMAKE_FLAGS": "", "CMAKE_TOOLCHAIN_FILE": "",
+                     "CMAKE_GENERATOR": "Ninja"},
+        "script": """cmake -S "${BS_source_dir:-.}" -B build -G "$CMAKE_GENERATOR" ${CMAKE_TOOLCHAIN_FILE:+-DCMAKE_TOOLCHAIN_FILE="$CMAKE_TOOLCHAIN_FILE"} $CMAKE_FLAGS $BS_args
+cmake --build build --parallel "$CORES"
+cmake --install build""",
+        "doc": """# A recipe says `buildsystem = "cmake"` and gives only what is its own:
+#   args        extra arguments, after the system's flags
+#   source_dir  where CMakeLists.txt lives, when not the top of the work dir""",
+    },
+    "autoconf": {
+        "defaults": {"AUTOCONF_CONFIGURE_FLAGS": ""},
+        "script": """cd "${BS_source_dir:-.}"
+./configure $AUTOCONF_CONFIGURE_FLAGS $BS_configure_args
+for _f in aclocal.m4 configure config.h.in; do
+  [ -f "$_f" ] && touch "$_f"
+done
+find . -name 'Makefile.in' -exec touch {} + 2>/dev/null || true
+make -j"$CORES" $BS_targets
+make $BS_install_args install""",
+        "doc": """# A recipe says `buildsystem = "autoconf"` and gives:
+#   configure_args  extra arguments for ./configure
+#   targets         arguments for the build step
+#   install_args    arguments for the install step (default: install)
+#
+# The timestamps are touched before building because a release tarball unpacks
+# with mtimes older than the configure/Makefile.in it ships, which makes make try
+# to regenerate them with autotools - not installed in these systems, because
+# building from a release tarball should not need them.""",
+    },
+    "meson": {
+        "defaults": {"MESON_FLAGS": "", "MESON_CROSS_FILE": ""},
+        "script": """meson setup build ${MESON_CROSS_FILE:+--cross-file "$MESON_CROSS_FILE"} $MESON_FLAGS $BS_args
+ninja -C build -j "$CORES"
+ninja -C build -j "$CORES" install""",
+        "doc": """# A recipe says `buildsystem = "meson"` and gives:
+#   args        extra -D options for setup
+#   source_dir  where meson.build lives, when not the top of the work dir""",
+    },
+    "make": {
+        "defaults": {},
+        "script": """make -j"$CORES" CC="$CC" AR="$AR" RANLIB="$RANLIB" CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS" $BS_make_args $BS_targets
+if [ "$BS_install" != "false" ]; then
+  DESTDIR="$DESTDIR" make CC="$CC" AR="$AR" RANLIB="$RANLIB" $BS_install_args install
+fi""",
+        "doc": """# A recipe says `buildsystem = "make"` and gives:
+#   targets       what to build
+#   make_args     arguments after the toolchain ones, so a recipe can override
+#   install_args  what to install (default: install)
+#   install       false when the build step already installs
+#
+# The toolchain is passed as arguments rather than through the environment
+# because a Makefile that says `CC=gcc` ignores the environment and would build
+# with the host's compiler.""",
+    },
+    "cargo": {
+        "defaults": {"CARGO_BUILD_TARGET": ""},
+        "script": """${BS_env:+$BS_env }cargo build --release --target "$CARGO_BUILD_TARGET" -j "$CORES" ${BS_no_default_features:+--no-default-features} ${BS_features:+--features "$BS_features"}
+if [ "$BS_install" != "false" ]; then
+  mkdir -p "$PREFIX/bin"
+  for _bin in ${BS_bin:?a cargo recipe must name its bin}; do
+    _exe="target/$CARGO_BUILD_TARGET/release/$_bin"
+    [ -f "$_exe" ] || _exe="$_exe.exe"
+    cp "$_exe" "$PREFIX/bin/"
+  done
+fi""",
+        "doc": """# A recipe says `buildsystem = "cargo"` and gives:
+#   bin                  the binary to install (required)
+#   features             --features value
+#   no_default_features  true to add --no-default-features
+#   install              false when something else installs the result
+#
+# Cargo does not read $LDFLAGS, so a binary it builds carries no runtime path;
+# `retrolunar export` writes a launcher beside a bundle for those.""",
+    },
+    "xmake": {
+        "defaults": {"XMAKE_FLAGS": ""},
+        "script": """xmake f -o "$OUTPKG" $XMAKE_FLAGS $BS_args
+xmake -j "$CORES"
+xmake install -o "$OUTPKG"
+""",
+        "doc": """# Nothing in these packages uses xmake yet: this is written from its manual.""",
+    },
+}
+
+# Lines the drivers cover, and lines that are the tool's own prologue now.
+CM_LINE = re.compile(r'^cmake\s+-S\s+(\S+)\s+-B\s+(\S+)\s+(.*)$')
+CM_BUILD = re.compile(r'^cmake\s+--build\s+(\S+)')
+CM_INSTALL = re.compile(r'^cmake\s+--install\s+')
+CONFIGURE_LINE = re.compile(r'^\./configure\s+(.*)$')
+MESON_SETUP = re.compile(r'^meson\s+setup\s+(\S+)\s+(.*)$')
+NINJA_LINE = re.compile(r'^ninja\s+-C\s+(\S+)\s+(.*)$')
+MAKE_LINE = re.compile(r'^make\s+(.*)$')
+CARGO_LINE = re.compile(r'^((?:[A-Za-z_][A-Za-z0-9_]*="[^"]*"\s+)*)cargo\s+build\s+(.*)$')
+TOUCH_FIX = re.compile(r'^(touch\s+aclocal\.m4|find\s+\.\s+-name\s+.Makefile\.in)')
+SOURCE_COPY = re.compile(r'^cp\s+-r\s+\$NESTDIR/[A-Za-z0-9._+-]+@source/\*\s+\.\s*$')
+
+
+def words(text):
+    """Shell words of one command line, for the arguments a driver takes."""
+    try:
+        return shlex.split(text, comments=False, posix=True)
+    except ValueError:
+        return None
+
+
+def join_continuations(lines):
+    """`\` at the end of a line joins it to the next, as the shell would."""
+    out = []
+    pending = ""
+    for line in lines:
+        if line.rstrip().endswith("\\"):
+            pending += line.rstrip()[:-1] + " "
+            continue
+        out.append(pending + line)
+        pending = ""
+    if pending:
+        out.append(pending)
+    return out
+
+
 # --- packages ------------------------------------------------------------
+
+def port_buildsystem(body, path):
+    """Turn a v1 body into a build system plus the bits only this package has.
+
+    Returns a dict with `name` (None when the body stays shell), `fields` for the
+    recipe, `pre` and `build` (the lines before and after the driver's own), and
+    `why` for the report. Conservative by design: a body it cannot account for
+    completely stays a shell body, which is always correct.
+    """
+    lines = join_continuations(dedent(body).split("\n"))
+    # The tool copies the source trees in now; the line that did it is noise.
+    kept = []
+    for line in lines:
+        s = line.strip()
+        if SOURCE_COPY.match(s):
+            REPORT.add(path, "dropped (the tool copies @source trees in)", line)
+            continue
+        kept.append(line)
+    lines = kept
+
+    def commands(ls):
+        return [(i, l.strip()) for i, l in enumerate(ls)
+                if l.strip() and not l.strip().startswith("#")]
+
+    cmds = commands(lines)
+    if not cmds:
+        return {"name": None, "fields": {}, "pre": [], "build": lines, "why": "no commands"}
+
+    name = None
+    for _, c in cmds:
+        if CM_LINE.match(c):
+            name = "cmake"
+            break
+        if CONFIGURE_LINE.match(c):
+            name = "autoconf"
+            break
+        if MESON_SETUP.match(c):
+            name = "meson"
+            break
+        if CARGO_LINE.match(c):
+            name = "cargo"
+            break
+        if MAKE_LINE.match(c) and c.split()[0] == "make":
+            name = "make"
+            break
+    if name is None:
+        return {"name": None, "fields": {}, "pre": [], "build": lines, "why": "no build system"}
+
+    drop = set()
+    fields = {}
+    toolchain = ("CC=", "AR=", "RANLIB=", "CFLAGS=", "CXXFLAGS=", "LDFLAGS=")
+    install_lines = 0
+
+    if name == "cmake":
+        for i, c in cmds:
+            m = CM_LINE.match(c)
+            if m:
+                src, _bdir, rest = m.group(1), m.group(2), m.group(3)
+                toks = words(rest)
+                if toks is None:
+                    return {"name": None, "fields": {}, "pre": [], "build": lines,
+                            "why": "unparseable cmake line"}
+                if any(t == "-G" or t.startswith("-G") for t in toks):
+                    return {"name": None, "fields": {}, "pre": [], "build": lines,
+                            "why": "cmake picks its own generator"}
+                args = [t for t in toks if t != "$CMAKE_FLAGS"]
+                if args:
+                    fields["args"] = args
+                if src not in (".", "$PWD"):
+                    fields["source_dir"] = src
+                drop.add(i)
+                continue
+            if CM_BUILD.match(c) or CM_INSTALL.match(c):
+                drop.add(i)
+        if len([1 for _, c in cmds if CM_LINE.match(c)]) != 1:
+            return {"name": None, "fields": {}, "pre": [], "build": lines,
+                    "why": "more than one cmake invocation"}
+
+    elif name == "autoconf":
+        conf = [i for i, c in cmds if CONFIGURE_LINE.match(c)]
+        if len(conf) != 1:
+            return {"name": None, "fields": {}, "pre": [], "build": lines,
+                    "why": "more than one configure invocation"}
+        for i, c in cmds:
+            m = CONFIGURE_LINE.match(c)
+            if m:
+                toks = words(m.group(1))
+                if toks is None:
+                    return {"name": None, "fields": {}, "pre": [], "build": lines,
+                            "why": "unparseable configure line"}
+                args = [t for t in toks if t != "$AUTOCONF_CONFIGURE_FLAGS"]
+                if args:
+                    fields["configure_args"] = args
+                drop.add(i)
+                continue
+            if TOUCH_FIX.match(c):
+                drop.add(i)
+                continue
+            if MAKE_LINE.match(c) and c.split()[0] == "make":
+                toks = words(c[5:].strip()) or []
+                toks = [t for t in toks if t != '-j"$CORES"' and t != "-j$CORES"]
+                if not toks or toks == ["install"]:
+                    drop.add(i)
+                    if toks == ["install"]:
+                        install_lines += 1
+                    continue
+                # A build step with its own arguments is not the driver's shape.
+                return {"name": None, "fields": {}, "pre": [], "build": lines,
+                        "why": "autotools with a hand-written make step"}
+
+    elif name == "meson":
+        for i, c in cmds:
+            m = MESON_SETUP.match(c)
+            if m:
+                toks = words(m.group(2))
+                if toks is None:
+                    return {"name": None, "fields": {}, "pre": [], "build": lines,
+                            "why": "unparseable meson line"}
+                args = [t for t in toks if t != "$MESON_FLAGS"]
+                if args:
+                    fields["args"] = args
+                drop.add(i)
+                continue
+            if NINJA_LINE.match(c):
+                drop.add(i)
+
+    elif name == "make":
+        makes = [i for i, c in cmds if MAKE_LINE.match(c) and c.split()[0] == "make"]
+        if len(makes) > 2:
+            return {"name": None, "fields": {}, "pre": [], "build": lines,
+                    "why": "more than two make invocations"}
+        for i, c in cmds:
+            if not (MAKE_LINE.match(c) and c.split()[0] == "make"):
+                continue
+            toks = words(c[5:].strip()) or []
+            toks = [t for t in toks if t != '-j"$CORES"' and t != "-j$CORES"]
+            if toks == ["install"]:
+                drop.add(i)
+                install_lines += 1
+                continue
+            vars_ = [t for t in toks if "=" in t or t.startswith("-")]
+            rest = [t for t in toks if t not in vars_]
+            if rest and rest[-1] == "install":
+                # The build step installs too: no separate install command.
+                fields["install"] = False
+                fields["targets"] = rest[:-1] or None      # type: ignore[assignment]
+                if fields["targets"] is None:
+                    fields.pop("targets")
+            elif rest:
+                fields["targets"] = rest
+            own = [t for t in vars_ if not any(t.startswith(p) for p in toolchain)]
+            if own:
+                fields["make_args"] = own
+            drop.add(i)
+
+    elif name == "cargo":
+        for i, c in cmds:
+            m = CARGO_LINE.match(c)
+            if m:
+                env = m.group(1).strip()
+                if env:
+                    fields.setdefault("env", env)
+                toks = words(m.group(2)) or []
+                feats = None
+                for k, t in enumerate(toks):
+                    if t == "--features" and k + 1 < len(toks):
+                        feats = toks[k + 1]
+                    elif t == "--no-default-features":
+                        fields["no_default_features"] = True
+                    elif t in ("--release", "--target", "-j") or t.startswith("$CARGO_BUILD_TARGET"):
+                        pass
+                if feats:
+                    fields["features"] = feats
+                drop.add(i)
+                continue
+            m = re.match(r'^_bin="target/\$CARGO_BUILD_TARGET/release/([A-Za-z0-9._+-]+)"$', c)
+            if m:
+                fields["bin"] = m.group(1)
+                drop.add(i)
+                continue
+            if re.match(r'^\[ -f "\$_bin" \]', c) or re.match(r'^mkdir -p "?\$PREFIX/bin', c) \
+               or re.match(r'^cp "\$_bin" "\$PREFIX/bin/"$', c):
+                drop.add(i)
+                continue
+        if "bin" not in fields:
+            return {"name": None, "fields": {}, "pre": [], "build": lines,
+                    "why": "a cargo recipe with no binary to install"}
+
+    # Everything above the driver's own lines runs first, everything below runs
+    # after it: that is what keeps a package's own preparation in order without
+    # any of it being understood.
+    first = min(drop)
+    last = max(drop)
+    pre = [l for i, l in enumerate(lines)
+           if i < first and l.strip() and i not in drop and not l.strip().startswith("#")]
+    build = [l for i, l in enumerate(lines) if i > last and l.strip() and i not in drop]
+    comments = [l.rstrip() for i, l in enumerate(lines)
+                if i < first and l.strip().startswith("#")]
+    return {"name": name, "fields": fields, "pre": pre, "build": build,
+            "comments": comments, "why": "recognised"}
+
 
 def port_package(src_dir, dst_dir):
     name = os.path.basename(src_dir.rstrip("/"))
@@ -388,27 +767,45 @@ def port_package(src_dir, dst_dir):
             if key in ("build", "deps", "file", "dir", "sys", "system", "name"):
                 continue
             lines.append('%s = "%s"' % (key, toml_esc(fields[key])))
+        if "build" in fields and out_name != "source.toml":
+            own = name if out_name == "source.toml" else None
+            prepared = rewrite_body(dedent(fields["build"]), f"{name}/{entry}", None, own)
+            prepared = apply_fixups(name, out_name, prepared)
+            bs = port_buildsystem(prepared, f"{name}/{entry}")
+            if bs["name"] is not None:
+                USES.setdefault(entry[:-4], set()).add(bs["name"])
+                lines.append('buildsystem = "%s"' % bs["name"])
+                for c in bs.get("comments", []):
+                    if c.strip() and not c.strip().startswith("# source") :
+                        lines.append(c.strip())
+                for k, v in bs["fields"].items():
+                    if isinstance(v, bool):
+                        lines.append("%s = %s" % (k, "true" if v else "false"))
+                    elif isinstance(v, list):
+                        lines.append("%s = [%s]" % (k, ", ".join('"%s"' % toml_esc(x) for x in v)))
+                    else:
+                        lines.append('%s = "%s"' % (k, toml_esc(v)))
+                for key, label in (("pre", "pre"), ("build", "post")):
+                    part = bs["pre"] if key == "pre" else bs["build"]
+                    if part:
+                        text = "\n".join(part).rstrip("\n")
+                        lines.append('%s = """' % label)
+                        lines.append(toml_esc(text))
+                        lines.append('"""')
+                REPORT.add(f"{name}/{entry}", "driven by the %s build system" % bs["name"],
+                           ", ".join("%s=%s" % kv for kv in bs["fields"].items()) or "no arguments")
+                text = "\n".join(lines).rstrip("\n") + "\n"
+                with open(os.path.join(dst_dir, out_name), "w") as f:
+                    f.write(text)
+                REPORT.add(f"{name}/{entry}", "ported", out_name)
+                continue
+            REPORT.add(f"{name}/{entry}", "left as a shell body (%s)" % bs["why"],
+                       entry)
+
         if "build" in fields:
             lines.append("")
             own = name if out_name == "source.toml" else None
             body = rewrite_body(dedent(fields["build"]), f"{name}/{entry}", None, own)
-            if name == "zlib" and out_name == "generic.toml":
-                # Added after the rewrite: this text is already v2 and must not be
-                # flagged as a v1 $PREFIX.
-                body += """
-# mingw zlib installs as libzlib, but several configure scripts hardcode -lz,
-# so the alias has to exist. It belongs in zlib's own directory, which is where
-# the library is; v1 wrote it into the shared prefix because there was one.
-if [ "$HOST_OS" = "mingw32" ]; then
-  for _f in "$PREFIX/lib"/libzlib.*; do
-    [ -f "$_f" ] || continue
-    _ext="${_f##*libzlib}"
-    [ -f "$PREFIX/lib/libz$_ext" ] || ln -s "libzlib$_ext" "$PREFIX/lib/libz$_ext"
-  done
-fi
-"""
-                REPORT.add("zlib/generic.lua", "moved the mingw libz alias into zlib's recipe",
-                           "was written into the shared prefix")
             # Fixups see the shell text, with its quoting, not the TOML escaping of it.
             body = apply_fixups(name, out_name, body)
             lines.append(body_to_toml(body))
@@ -417,6 +814,13 @@ fi
         with open(os.path.join(dst_dir, out_name), "w") as f:
             f.write(text)
         REPORT.add(f"{name}/{entry}", "ported", out_name)
+        for (want_pkg, want_file), body in EXTRA_FILES.items():
+            if want_pkg != name:
+                continue
+            with open(os.path.join(dst_dir, want_file), "w") as f:
+                f.write(body)
+            REPORT.add(f"{name}/{want_file}", "written from the port's own notes",
+                       "v1 had no separate file for this system")
 
 
 # --- systems -------------------------------------------------------------
@@ -461,7 +865,7 @@ def section_kind(marker, line):
     return "shell"
 
 
-def port_system(src_dir, dst_root, native_name):
+def port_system(src_dir, dst_root, native_name, uses_path=None):
     name = rename(os.path.basename(src_dir.rstrip("/")))
     out_dir = os.path.join(dst_root, "system@" + name)
     os.makedirs(out_dir, exist_ok=True)
@@ -470,7 +874,7 @@ def port_system(src_dir, dst_root, native_name):
     fallbacks = [rename(f) for f in re.findall(r'"([^"]+)"', fields.get("recipe_fallbacks", ""))]
 
     buckets = {"system": [], "autoconf": [], "cmake": [], "meson": [], "cargo": [],
-               "script": []}
+               "make": [], "xmake": [], "script": []}
     pending = []
     assigns = {}
     var_kind = {}
@@ -583,10 +987,338 @@ def port_system(src_dir, dst_root, native_name):
         buckets["cargo"].append('CARGO_BUILD_TARGET = "%s"' % RUST_TRIPLE.get(HOST_ARCH, ""))
         REPORT.add(f"{name}/generic.lua", "added the cargo target v1 never defined",
                    RUST_TRIPLE.get(HOST_ARCH, ""))
-    for bs in ("autoconf", "cmake", "meson", "cargo"):
-        if buckets[bs]:
-            with open(os.path.join(out_dir, bs + ".toml"), "w") as f:
-                f.write(f"[buildsystem.{bs}]\n" + "\n".join(buckets[bs]) + "\n")
+    # Which build systems the packages of this system ask for: read from the
+    # manifest the packages pass wrote. A system carries the driver script for
+    # each, in its own file, where its fingerprint covers it.
+    used = set()
+    uses_file = uses_path or os.path.join(dst_root, ".port-uses.json")
+    if os.path.isfile(uses_file):
+        try:
+            with open(uses_file) as f:
+                manifest = json.load(f)
+            for key in ("generic", name):
+                used.update(manifest.get(key, []))
+        except (ValueError, OSError):
+            used = set()
+
+    for bs in ("autoconf", "cmake", "meson", "cargo", "make", "xmake"):
+        body = buckets[bs]
+        tpl = BUILD_SYSTEMS.get(bs) if bs in used else None
+        if not body and tpl is None:
+            continue
+        parts = []
+        if tpl is not None and tpl.get("doc"):
+            parts.append(tpl["doc"])
+        parts.append("[buildsystem.%s]" % bs)
+        if tpl is not None:
+            have = "\n".join(body)
+            for key, value in tpl["defaults"].items():
+                if re.search(r'(?m)^%s = ' % re.escape(key), have):
+                    continue  # the system says its own value
+                parts.append('%s = "%s"' % (key, toml_esc(value)))
+        parts.extend(body)
+        if tpl is not None:
+            parts.append('script = """')
+            parts.append(toml_esc(tpl["script"].rstrip("\n")))
+            parts.append('"""')
+        with open(os.path.join(out_dir, bs + ".toml"), "w") as f:
+            f.write("\n".join(parts).rstrip("\n") + "\n")
+        if tpl is not None:
+            REPORT.add(f"system@{name}/{bs}.toml", "carries the %s driver" % bs,
+                       "script + defaults, overridable by this system")
+        else:
+            REPORT.add(f"system@{name}/{bs}.toml", "system's own %s settings" % bs,
+                       "%d line(s)" % len(body))
+
+    for entry in sorted(os.listdir(src_dir)):
+        path = os.path.join(src_dir, entry)
+        if not entry.endswith(".lua"):
+            if entry.endswith((".md",)):
+                continue
+            if os.path.isfile(path):
+                shutil.copy2(path, os.path.join(dst_dir, entry))
+                REPORT.add(entry, "copied unchanged", entry)
+            continue
+        if entry == "stage1.md":
+            continue
+        fields, deps, order = parse_recipe(path)
+        out_name = rename(entry[:-4]) + ".toml"
+        if entry == "generic.lua":
+            out_name = "generic.toml"
+        if entry == "source.lua":
+            out_name = "source.toml"
+
+        lines = []
+        if out_name != "source.toml":
+            if name == "vim" and "ncurses" not in deps:
+                # v1 reached into the shared prefix for its terminal library and named no
+                # dependency; with per-package directories that has to be explicit.
+                deps = deps + ["ncurses"]
+                REPORT.add(f"{name}/{entry}", "added a dependency v1 used implicitly",
+                           "ncurses")
+            if deps:
+                lines.append("deps = [" + ", ".join('"%s"' % d for d in deps) + "]")
+        for key in order:
+            if key in ("build", "deps", "file", "dir", "sys", "system", "name"):
+                continue
+            lines.append('%s = "%s"' % (key, toml_esc(fields[key])))
+        if "build" in fields and out_name != "source.toml":
+            own = name if out_name == "source.toml" else None
+            prepared = rewrite_body(dedent(fields["build"]), f"{name}/{entry}", None, own)
+            prepared = apply_fixups(name, out_name, prepared)
+            bs = port_buildsystem(prepared, f"{name}/{entry}")
+            if bs["name"] is not None:
+                USES.setdefault(entry[:-4], set()).add(bs["name"])
+                lines.append('buildsystem = "%s"' % bs["name"])
+                for c in bs.get("comments", []):
+                    if c.strip() and not c.strip().startswith("# source") :
+                        lines.append(c.strip())
+                for k, v in bs["fields"].items():
+                    if isinstance(v, bool):
+                        lines.append("%s = %s" % (k, "true" if v else "false"))
+                    elif isinstance(v, list):
+                        lines.append("%s = [%s]" % (k, ", ".join('"%s"' % toml_esc(x) for x in v)))
+                    else:
+                        lines.append('%s = "%s"' % (k, toml_esc(v)))
+                for key, label in (("pre", "pre"), ("build", "post")):
+                    part = bs["pre"] if key == "pre" else bs["build"]
+                    if part:
+                        text = "\n".join(part).rstrip("\n")
+                        lines.append('%s = """' % label)
+                        lines.append(toml_esc(text))
+                        lines.append('"""')
+                REPORT.add(f"{name}/{entry}", "driven by the %s build system" % bs["name"],
+                           ", ".join("%s=%s" % kv for kv in bs["fields"].items()) or "no arguments")
+                text = "\n".join(lines).rstrip("\n") + "\n"
+                with open(os.path.join(dst_dir, out_name), "w") as f:
+                    f.write(text)
+                REPORT.add(f"{name}/{entry}", "ported", out_name)
+                continue
+            REPORT.add(f"{name}/{entry}", "left as a shell body (%s)" % bs["why"],
+                       entry)
+
+        if "build" in fields:
+            lines.append("")
+            own = name if out_name == "source.toml" else None
+            body = rewrite_body(dedent(fields["build"]), f"{name}/{entry}", None, own)
+            # Fixups see the shell text, with its quoting, not the TOML escaping of it.
+            body = apply_fixups(name, out_name, body)
+            lines.append(body_to_toml(body))
+
+        text = "\n".join(lines).rstrip("\n") + "\n"
+        with open(os.path.join(dst_dir, out_name), "w") as f:
+            f.write(text)
+        REPORT.add(f"{name}/{entry}", "ported", out_name)
+        for (want_pkg, want_file), body in EXTRA_FILES.items():
+            if want_pkg != name:
+                continue
+            with open(os.path.join(dst_dir, want_file), "w") as f:
+                f.write(body)
+            REPORT.add(f"{name}/{want_file}", "written from the port's own notes",
+                       "v1 had no separate file for this system")
+
+
+# --- systems -------------------------------------------------------------
+
+def split_sections(setup):
+    """Split a v1 setup fragment into (marker, [lines]) chunks."""
+    sections = []
+    current = ("(header)", [])
+    for line in setup.split("\n"):
+        m = re.match(r'\s*#\s*---\s*(.+?)\s*-*\s*$', line)
+        if m:
+            if current[1]:
+                sections.append(current)
+            current = (m.group(1), [])
+            continue
+        current[1].append(line)
+    if current[1]:
+        sections.append(current)
+    return sections
+
+
+def section_kind(marker, line):
+    """Which v2 file a setup line belongs in."""
+    s = line.strip()
+    if s.startswith("#") or not s:
+        return "comment"
+    m = re.match(r'([A-Za-z_][A-Za-z0-9_]*)=', s)
+    var = m.group(1) if m else ""
+    for prefix, bs in BUILDSYSTEM_BY_PREFIX:
+        if var.startswith(prefix):
+            return bs
+    # `ac_cv_*`/`gl_cv_*` are configure's cache: they belong next to the rest of
+    # autoconf's settings, not in the system's base facts.
+    if re.match(r'^(ac|gl|gt)_cv_', var) or re.match(r'^[a-z_]+_cv_', var):
+        return "autoconf"
+    if var in ("CC_aarch64_linux_android", "CFLAGS_aarch64_linux_android",
+               "CXX_aarch64_linux_android", "CXXFLAGS_aarch64_linux_android") or \
+       re.match(r'(CC|CFLAGS|CXX|CXXFLAGS)_[a-z0-9_]+$', var):
+        return "cargo"
+    if var:
+        return "system"
+    return "shell"
+
+
+def port_system(src_dir, dst_root, native_name, uses_path=None):
+    name = rename(os.path.basename(src_dir.rstrip("/")))
+    out_dir = os.path.join(dst_root, "system@" + name)
+    os.makedirs(out_dir, exist_ok=True)
+
+    fields, deps, order = parse_recipe(os.path.join(src_dir, "generic.lua"))
+    fallbacks = [rename(f) for f in re.findall(r'"([^"]+)"', fields.get("recipe_fallbacks", ""))]
+
+    buckets = {"system": [], "autoconf": [], "cmake": [], "meson": [], "cargo": [],
+               "make": [], "xmake": [], "script": []}
+    pending = []
+    assigns = {}
+    var_kind = {}
+    var_comments = {}
+    var_order = []
+
+    for marker, lines in split_sections(dedent(fields.get("setup", ""))):
+        for line in lines:
+            if not line.strip():
+                continue
+            kind = section_kind(marker, line)
+            s = line.strip()
+            if kind == "comment":
+                pending.append(s)
+                continue
+            # Search paths the emitter now builds from the closure.
+            if any(p.match(s) for p in CLOSURE_PATTERNS):
+                REPORT.add(f"{name}/generic.lua", "dropped (closure provides it)", s)
+                continue
+            if s.startswith("export ") and "=" in s.split(None, 1)[1]:
+                s = s.split(None, 1)[1]
+                line = s
+                REPORT.add(f"{name}/generic.lua",
+                           "kept an exported assignment (v2 exports every variable)", s)
+            elif s.startswith("export "):
+                REPORT.add(f"{name}/generic.lua",
+                           "dropped 'export' (variables are exported per file)", s)
+                continue
+            if re.match(r'^CORES=', s):
+                REPORT.add(f"{name}/generic.lua", "dropped CORES (the emitter exports it)", s)
+                continue
+            if s.startswith(":") or re.match(r'^(if|for|while|case|unset|exit|_|eval)\b', s) or \
+               s.endswith("fi") or s.endswith("done") or s.endswith("then") or s == "fi" or \
+               s.startswith("_ndk") or "$(" in s and re.match(r'^[A-Za-z_]+="\$\(', s) is None:
+                buckets["script"].append(line)
+                continue
+            m = re.match(r'([A-Za-z_][A-Za-z0-9_]*)="(.*)"\s*$', s)
+            if m:
+                var, value = m.group(1), m.group(2)
+                kind = section_kind(marker, s)
+                if kind == "shell":
+                    buckets["script"].extend(pending)
+                    del pending[:]
+                    buckets["script"].append(line)
+                    continue
+                value = rewrite_body(value, f"{name}/generic.lua", True)
+                if var not in assigns:
+                    assigns[var] = []
+                    var_kind[var] = kind
+                    var_comments[var] = list(pending)
+                    del pending[:]
+                    var_order.append(var)
+                assigns[var].append(value)
+                continue
+            buckets["script"].extend(pending)
+            del pending[:]
+            buckets["script"].append(line)
+
+    # v1 set a variable once and then appended to it; TOML allows one key, so the
+    # assignments are merged. A variable the emitter also sets has to keep its own
+    # value in front of the appended parts, or the closure's search paths vanish.
+    EMITTER_VARS = {"CPPFLAGS", "LDFLAGS", "PKG_CONFIG_LIBDIR", "PKG_CONFIG_PATH",
+                    "CMAKE_PREFIX_PATH", "PATH", "LD_LIBRARY_PATH", "DEPS"}
+    for var in var_order:
+        parts = assigns[var]
+        keep_self = var in EMITTER_VARS or parts[0].lstrip().startswith("$" + var)
+        merged = ""
+        for raw in parts:
+            piece = raw.strip()
+            if piece.startswith("$" + var):
+                piece = piece[len(var) + 1:]
+            if not piece:
+                continue
+            if merged and merged[-1] not in ":; " and piece[0] not in ":; ":
+                merged += " "
+            merged += piece
+        while "  " in merged:
+            merged = merged.replace("  ", " ")
+        value = apply_fixups(name, var_kind[var] + ".toml", merged)
+        if keep_self:
+            sep = "" if merged[:1] in (":", ";") or not merged else " "
+            value = "$" + var + sep + merged.strip()
+        buckets[var_kind[var]].extend(var_comments[var])
+        buckets[var_kind[var]].append(f'{var} = "{toml_esc(value)}"')
+        if len(parts) > 1:
+            REPORT.add(f"{name}/generic.lua", "merged repeated assignments", var)
+
+    # system.toml
+    sys_lines = []
+    if fallbacks:
+        sys_lines.append("fallbacks = [" + ", ".join('"%s"' % f for f in fallbacks) + "]")
+    # No host key: v1 had none, and it needs none. A build that needs a host
+    # program either names it as a dependency (`m4@native`, whose directory the
+    # emitter puts on PATH) or uses the one already in the user's PATH, which is
+    # what every v1 cross system did.
+    if buckets["script"]:
+        script = toml_esc("\n".join(buckets["script"] + pending))
+        sys_lines.append("")
+        sys_lines.append('script = """\n' + script.strip("\n") + '\n"""')
+    if buckets["system"]:
+        sys_lines.append("")
+        sys_lines.extend(buckets["system"])
+    with open(os.path.join(out_dir, "system.toml"), "w") as f:
+        f.write("[system]\n" + "\n".join(sys_lines).rstrip("\n") + "\n")
+
+    if name == native_name and not buckets["cargo"]:
+        # v1's native system defined no cargo target, and its cargo recipes pass
+        # `--target $CARGO_BUILD_TARGET`: a native cargo build could not have worked.
+        # Cargo has its own triple spelling, so this is not $TARGET_TRIPLET.
+        buckets["cargo"].append('CARGO_BUILD_TARGET = "%s"' % RUST_TRIPLE.get(HOST_ARCH, ""))
+        REPORT.add(f"{name}/generic.lua", "added the cargo target v1 never defined",
+                   RUST_TRIPLE.get(HOST_ARCH, ""))
+    # Which build systems the packages of this system ask for: read from the
+    # manifest the packages pass wrote. A system carries the driver script for
+    # each, in its own file, where its fingerprint covers it.
+    used = set()
+    uses_file = uses_path or os.path.join(dst_root, ".port-uses.json")
+    if os.path.isfile(uses_file):
+        try:
+            with open(uses_file) as f:
+                manifest = json.load(f)
+            for key in ("generic", name):
+                used.update(manifest.get(key, []))
+        except (ValueError, OSError):
+            used = set()
+
+    for bs in sorted(used):
+        tpl = BUILD_SYSTEMS.get(bs)
+        if tpl is None:
+            continue
+        have = "\n".join(buckets[bs])
+        parts = []
+        if tpl.get("doc"):
+            parts.append(tpl["doc"])
+        parts.append("[buildsystem.%s]" % bs)
+        for key, value in tpl["defaults"].items():
+            if re.search(r'(?m)^%s = ' % re.escape(key), have):
+                continue  # the system says its own value
+            parts.append('%s = "%s"' % (key, toml_esc(value)))
+        parts.extend(buckets[bs])
+        script = tpl["script"].rstrip("\n")
+        parts.append('script = """')
+        parts.append(toml_esc(script))
+        parts.append('"""')
+        with open(os.path.join(out_dir, bs + ".toml"), "w") as f:
+            f.write("\n".join(parts).rstrip("\n") + "\n")
+        REPORT.add(f"system@{name}/{bs}.toml", "carries the %s driver" % bs,
+                   "script + defaults, overridable by this system")
+        buckets[bs] = []
 
     for entry in sorted(os.listdir(src_dir)):
         if entry.endswith((".cmake", ".ini")):
@@ -607,6 +1339,9 @@ def main():
     ap.add_argument("dst")
     ap.add_argument("--native", default="clang-native")
     ap.add_argument("--report", default="PORTING.md")
+    ap.add_argument("--uses", default=None,
+                    help="manifest from the packages pass, naming the build "
+                         "systems each system's packages need")
     args = ap.parse_args()
 
     if args.mode == "systems":
@@ -617,7 +1352,7 @@ def main():
                 continue
             if not is_system_file(open(g).read()):
                 continue
-            port_system(path, args.dst, args.native)
+            port_system(path, args.dst, args.native, args.uses)
     else:
         for entry in sorted(os.listdir(args.src)):
             path = os.path.join(args.src, entry)
@@ -630,6 +1365,13 @@ def main():
                 continue
             port_package(path, os.path.join(args.dst, entry))
 
+    if args.mode == "packages":
+        with open(os.path.join(args.dst, ".port-uses.json"), "w") as f:
+            json.dump({k: sorted(v) for k, v in USES.items()}, f, indent=1, sort_keys=True)
+    if args.mode == "systems" and args.uses is None:
+        default_manifest = os.path.join(args.dst, ".port-uses.json")
+        if os.path.isfile(default_manifest):
+            os.remove(default_manifest)
     REPORT.write(args.report)
     print(f"wrote {args.report}: {len(REPORT.lines)} entries", file=sys.stderr)
 
