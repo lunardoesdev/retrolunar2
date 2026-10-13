@@ -29,6 +29,7 @@ retrolunar_sources = files(
   'src/toml_read.c',
   'src/system.c',
   'src/package.c',
+  'src/manifest.c',
   'src/resolve.c',
   'src/fingerprint.c',
   'src/env.c',
@@ -39,6 +40,7 @@ retrolunar_sources = files(
   'src/cmd_generate.c',
   'src/cmd_env.c',
   'src/cmd_export.c',
+  'src/cmd_shell.c',
   'src/bin.c',
 )
 

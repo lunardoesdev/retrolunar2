@@ -35,6 +35,10 @@ typedef struct {
  * a bare name. 0 on success. */
 int target_key(const char *dep, const char *caller_sys, char *out, size_t outsz);
 
+/* A project manifest to consult for its own name, before the tree: a local file
+ * overrides a package of the same name, and supplies one the tree lacks. */
+void resolve_set_local(const char *file, const char *name);
+
 int resolve_targets(const char *packages, const char *const *targets, size_t ntargets,
                     graph_t *out);
 void graph_free(graph_t *g);

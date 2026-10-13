@@ -40,6 +40,13 @@ char *package_build_file(const char *packages, const char *name, const char *sys
     return cand;
 }
 
+/* The tables a project manifest adds to the recipe format. They are read by
+ * manifest.c; the recipe reader only has to let them through, and it grows this
+ * list in the same commit that teaches the manifest to use a table. */
+static int manifest_table(const char *key) {
+    return strcmp(key, "shell") == 0;
+}
+
 static int load_doc(const char *file, pkg_t *out) {
     toml_doc_t doc;
     if (toml_doc_load(&doc, file) != 0)
@@ -139,6 +146,8 @@ static int load_doc(const char *file, pkg_t *out) {
          * something silently ignored. */
         char *text = toml_scalar_to_str(v);
         if (text == NULL) {
+            if (v.type == TOML_TABLE && manifest_table(key))
+                continue;
             toml_err(v, "unknown key '%s' of type %s", key, toml_type_name(v.type));
             bad = 1;
             continue;
@@ -187,6 +196,31 @@ int package_load(const char *packages, const char *name, const char *sys,
         return -1;
     }
     out->file = file;
+    if (load_doc(file, out) != 0) {
+        package_free(out);
+        return -1;
+    }
+    return 0;
+}
+
+int package_load_file(const char *file, const char *name, const char *sys, pkg_t *out) {
+    memset(out, 0, sizeof *out);
+    out->sources = 1;
+    strlist_init(&out->deps);
+    strlist_init(&out->probes);
+    pairlist_init(&out->vars);
+    out->name = xstrdup(name);
+    out->sys = xstrdup(sys != NULL ? sys : "");
+    const char *slash = strrchr(file, '/');
+    if (slash == NULL) {
+        out->dir = xstrdup(".");
+    } else {
+        size_t n = (size_t)(slash - file);
+        out->dir = xmalloc(n + 1);
+        memcpy(out->dir, file, n);
+        out->dir[n] = '\0';
+    }
+    out->file = xstrdup(file);
     if (load_doc(file, out) != 0) {
         package_free(out);
         return -1;

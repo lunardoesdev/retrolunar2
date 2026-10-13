@@ -5,6 +5,16 @@
 
 #include "config.h"
 
+/* The project's own manifest, when the run has one. */
+static const char *local_file = NULL;
+static const char *local_name = NULL;
+
+void resolve_set_local(const char *file, const char *name) {
+    local_file = file;
+    local_name = name;
+}
+
+
 /* --- target parsing ------------------------------------------------------ */
 
 typedef struct {
@@ -174,8 +184,12 @@ static int visit(visit_ctx_t *ctx, const char *pack, const char *sys, const char
     }
 
     pkg_t pkg;
-    if (package_load(ctx->g->packages, pack, sys, system, &pkg) != 0)
+    if (local_file != NULL && strcmp(pack, local_name) == 0) {
+        if (package_load_file(local_file, pack, sys, &pkg) != 0)
+            return -1;
+    } else if (package_load(ctx->g->packages, pack, sys, system, &pkg) != 0) {
         return -1;
+    }
 
     strlist_add(&ctx->stack, key);
     for (size_t i = 0; i < pkg.deps.n; i++) {

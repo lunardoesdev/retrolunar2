@@ -32,6 +32,11 @@ int package_load(const char *packages, const char *name, const char *sys,
                  const system_t *system, pkg_t *out);
 void package_free(pkg_t *p);
 
+/* One recipe file as a package: a project manifest is a recipe that does not
+ * live in the tree, so it is read from its own file, under the name its
+ * directory gives it. */
+int package_load_file(const char *file, const char *name, const char *sys, pkg_t *out);
+
 /* Which build file wins, as an absolute path, or NULL when the package has
  * none for this system. Reported by the caller with its own message. */
 char *package_build_file(const char *packages, const char *name, const char *sys,
