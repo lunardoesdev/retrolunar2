@@ -24,6 +24,18 @@ static char *quote(const char *value) {
     return out;
 }
 
+/* Whether this node is the one `build --out DIR` asked about: it is installed
+ * into DIR and deliberately gets no name in the nest, while every other node
+ * does — a dependency is still built and named where the rest of the graph
+ * expects to find it. */
+static int is_out_target(const pkg_t *p) {
+    if (g_out_key == NULL || g_out_dir == NULL)
+        return 0;
+    char key[512];
+    snprintf(key, sizeof key, "%s@%s", p->name, p->sys);
+    return strcmp(key, g_out_key) == 0;
+}
+
 /* Where a node's package directory is, as the shell sees it: the store entry its
  * fingerprint names, or the directory `build --out DIR` asked for.
  *
@@ -34,7 +46,7 @@ static char *quote(const char *value) {
 static char *out_quoted(const pkg_t *p, const char *fp) {
     char key[512];
     snprintf(key, sizeof key, "%s@%s", p->name, p->sys);
-    if (g_out_key != NULL && strcmp(key, g_out_key) == 0 && g_out_dir != NULL)
+    if (is_out_target(p))
         return quote(g_out_dir);
     char joined[1024];
     snprintf(joined, sizeof joined, "$NESTDIR/store/%s", fp);
@@ -190,7 +202,7 @@ static void emit_publish(const graph_t *g, size_t i, const char *fp, FILE *out) 
             "    else\n"
             "      mkdir -p \"$OUTPKG\"\n"
             "    fi\n");
-    if (g_out_dir == NULL) {
+    if (!is_out_target(p)) {
         char *entry = out_quoted(p, fp);
         emit_friendly_name(p, entry, out, ind);
         free(entry);
@@ -369,7 +381,7 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
         char *outpkg_here = out_quoted(p, fps[i]);
         fprintf(out, "  if [ \"$_stored\" = '%s' ] && [ -d %s ]; then\n", fps[i], outpkg_here);
         fprintf(out, "    echo \"skip %s@%s (fresh)\"\n", p->name, p->sys);
-        if (g_out_dir == NULL)
+        if (!is_out_target(p))
             emit_friendly_name(p, outpkg_here, out, "    ");
         free(outpkg_here);
         fputs("  else\n", out);

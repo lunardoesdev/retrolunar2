@@ -243,31 +243,58 @@ out of `nestdir/libpng@clang-native`.
 - Array handling when peer TOML files merge (assumption: replace, not append).
 - Whether `env` needs a `--json` form.
 
-## Planned: what is agreed and not built yet
+## The four phases: what they came to
 
-Features he asked for, in the order they will be built. Each phase ends with the
-acceptance green, and `[repo.*]`/`[cache]` appear in the manifest only in the
-phase that reads them.
+Each phase ended with the acceptance green, and the acceptance covers each of
+them: a project of its own, a second version of a package keeping its own entry,
+`gc`, an entry built in one nest and run from another, a tampered entry refused.
 
-1. **The manifest and the local shell.** `retrolunar.toml` in a directory is a
-   recipe: the same keys as a tree recipe (`deps`, `buildsystem`, `args`,
-   `pre`/`post`), no `version`, plus `[shell] deps` for what only the shell needs.
-   The name is the directory's. `deps` is shared: the package needs it, the shell
-   provides it. Commands: `shell` (build what is missing, then a shell with the
-   closure's environment), `run <cmd>` (the same without the interactive shell,
-   for CI), `build [--out DIR]` (the package itself, installed into DIR).
-2. **A store addressed by content.** A build's key is the fingerprint that already
-   exists (recipe text, system fragments, dependencies transitively, probe
-   output), so entries live in `store/<hash>` and two revisions of a repository
-   cannot overwrite each other, while the same package in two projects is one
-   entry. `nest/<pkg>@<sys>` becomes a friendly name pointing at the entry the
-   current lock chose; unused entries are collected on demand.
-3. **Repositories.** A list, resolved in the order the manifest declares them,
-   with the built-in `default` last so a project's repository wins. `--repo
-   NAME=URL[@REV]` adds one for a single run; `--no-default-repo` drops the
-   built-in one, which is how a build proves it does not quietly depend on it.
-   The lock file records the order, the revisions and each package's key.
-4. **A binary cache, local and remote.** Local comes free from phase 2; remote is
-   the same entry over HTTP, pulled before a build and pushed after, verified
-   against a recorded content hash. Tokens come from the environment, never from
-   a file in the project.
+1. **The manifest and the local shell — built.** `retrolunar.toml` in a directory
+   is a recipe: the same keys as a tree recipe (`deps`, `buildsystem`, `args`,
+   `pre`/`post`, `build`), no `version`, plus `[shell] deps`. The name is the
+   directory's. `deps` is shared: the package needs it, the shell provides it.
+   Commands: `shell`, `run <cmd>`, `build [--out DIR] [-o FILE]`. The environment
+   is not parsed in C: `shell`/`run` write `<nest>/.retrolunar/env.sh` and a shell
+   executes it, because the lines are shell (they read `$NESTDIR`, they append to
+   `${PATH:-}`).
+2. **A store addressed by content — built.** A node's directory is
+   `store/<fingerprint>` (recipe, system fragments, dependencies transitively,
+   probe output), and `libpng@clang-native` is a symlink to whichever entry
+   resolved last. Two revisions of a repository, or two projects, keep their own
+   `libpng`; the same inputs are one entry. A directory from before this change is
+   moved into the store rather than thrown away, so an old nest keeps working.
+   The freshness test also asks whether the entry is there, so deleting one by
+   hand rebuilds it instead of looking built. `gc` removes entries no name points
+   at.
+3. **Repositories — built.** `[repo.NAME] url` and optional `rev`, searched in the
+   order the manifest declares them with the built-in `default` last; `--repo
+   NAME=URL[@REV]` adds one for a run and `--no-default-repo` drops the built-in
+   one. A tree is therefore a colon-separated path: the first repository holding a
+   name is where it comes from, for packages and systems alike. A url that is a
+   directory is used where it is; anything else is cloned once into
+   `$HOME/.cache/retrolunar/repos` and only asked to change revision when a
+   different one is wanted, so an unchanged project never touches the network.
+   `retrolunar.lock` records the revision each repository resolved to and the
+   entry every node came out as.
+4. **A binary cache — built as push and pull.** `cache push|pull TARGET...
+   --cache DIR|URL`, with `<entry>.tar.gz` and the digest of those bytes beside
+   it at the cache; `[cache] url` in the manifest names the same thing. Nothing
+   is sent that has not been built, nothing is unpacked that does not match its
+   digest, and the digest covers the executable bit (a `bin/m4` without it is not
+   the package that was built). A nest records the contents it accepted for a
+   name, and refuses a different tree under the same name: the same inputs do not
+   quietly become another package. That is a promise about one nest, not a
+   signature.
+
+### Not done, and why
+
+- The cache is not consulted *during* a build. `cache pull` and then a build is
+  the present shape; a transparent pull needs the tool to answer "is this entry
+  here?" before emitting a node's block, which is the next step and is small.
+- Nothing is signed. An entry is checked against the digest published beside it,
+  which catches a corrupted transfer, not a hostile cache.
+- Tokens for a private repository are the environment's: git reads them, nothing
+  is written to a file in the project, and there is no `--token` flag to add one
+  to a command line where it would land in the shell history.
+- `--locked` (resolve nothing the lock does not name) is not implemented. The
+  lock is written after a build and read for revisions.

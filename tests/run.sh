@@ -221,7 +221,7 @@ deps = ["zlib@$native"]
 
 build = """
 mkdir -p \"\$PREFIX/bin\"
-printf '#!/bin/sh\\necho proj from %s\\n' \"\\$PREFIX\" > \"\\$PREFIX/bin/proj\"
+printf '#!/bin/sh\\necho proj from %s\\n' \"\\$OUTPKG\" > \"\\$PREFIX/bin/proj\"
 chmod +x \"\$PREFIX/bin/proj\"
 """
 
