@@ -217,18 +217,22 @@ echo "=== a project: its own manifest, its own repositories, its own build ==="
 PROJ="$WORK/proj"
 rm -rf "$PROJ"
 mkdir -p "$PROJ"
-cat >"$PROJ/retrolunar.toml" <<EOF
-deps = ["zlib@$native"]
+# The manifest is written with a quoted heredoc: nothing in it is the shell's to
+# interpret, so no backslash has to be counted. The two values that vary are
+# placeholders, substituted once below.
+cat >"$PROJ/retrolunar.toml" <<'EOF'
+deps = ["zlib@NATIVE_SYS"]
 
 build = """
-mkdir -p \"\$PREFIX/bin\"
-printf '#!/bin/sh\\necho proj from %s\\n' \"\\$OUTPKG\" > \"\\$PREFIX/bin/proj\"
-chmod +x \"\$PREFIX/bin/proj\"
+mkdir -p "$PREFIX/bin"
+printf '#!/bin/sh\necho proj from %s\n' "$OUTPKG" > "$PREFIX/bin/proj"
+chmod +x "$PREFIX/bin/proj"
 """
 
 [repo.packages]
-url = "$PACKAGES"
+url = "@PACKAGES@"
 EOF
+sed -i "s|NATIVE_SYS|$native|; s|@PACKAGES@|$PACKAGES|" "$PROJ/retrolunar.toml"
 PNEST="$WORK/proj-nest"
 rm -rf "$PNEST"
 ( cd "$PROJ" && "$RL" --nest "$PNEST" --no-default-repo run sh -- -c 'echo "zlib at $zlib_PREFIX"' ) \
