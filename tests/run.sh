@@ -37,11 +37,11 @@ if [ -d "$SOURCES" ]; then
     python3 "$root/tools/lua2toml.py" systems "$SOURCES" "$WORK/sys" \
         --report "$WORK/sys/PORTING.md" --uses "$WORK/pkg/.port-uses.json" 2>&1 | tail -1
     rm -rf "$PACKAGES"/system@*
-    cp -r "$WORK"/sys/system@* "$PACKAGES/"
+    cp -rf "$WORK"/sys/system@* "$PACKAGES/"
     for d in "$WORK"/pkg/*/; do
         n=$(basename "$d")
         rm -rf "$PACKAGES/$n"
-        cp -r "$d" "$PACKAGES/$n"
+        cp -rf "$d" "$PACKAGES/$n"
     done
     cp "$WORK/pkg/PORTING.md" "$PACKAGES/PORTING.md" 2>/dev/null || true
     cp "$WORK/sys/PORTING.md" "$PACKAGES/PORTING-systems.md" 2>/dev/null || true

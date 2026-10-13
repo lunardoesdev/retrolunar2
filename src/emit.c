@@ -144,7 +144,7 @@ static void emit_publish(const graph_t *g, size_t i, const char *fp, FILE *out) 
             "    mkdir -p \"$(dirname \"$OUTPKG\")\"\n"
             "    mkdir -p \"$OUTPKG\"\n"
             "    if [ -d \"$DESTDIR$OUTPKG\" ]; then\n"
-            "      cp -a \"$DESTDIR$OUTPKG/.\" \"$OUTPKG/\"\n"
+            "      cp -af \"$DESTDIR$OUTPKG/.\" \"$OUTPKG/\"\n"
             "    fi\n");
     fprintf(out, "%s# Record what this package was built from and in what environment.\n", ind);
     fprintf(out, "%smkdir -p \"$NESTDIR/.retrolunar/state/%s\"\n", ind, p->sys);
@@ -207,7 +207,7 @@ static void emit_sources(const graph_t *g, size_t i, FILE *out) {
     fprintf(out, "    BS_sources=\"%s\"\n", srcs);
     free(srcs);
     strlist_free(&sources);
-    fputs("    for _src in $BS_sources; do cp -r \"$_src\"/. . ; done\n", out);
+    fputs("    for _src in $BS_sources; do cp -rf \"$_src\"/. . ; done\n", out);
 }
 
 static void emit_bs_vars(const graph_t *g, size_t i, FILE *out) {

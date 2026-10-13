@@ -510,20 +510,20 @@ fi""",
         "script": """_site="$PREFIX/${PYTHON_SITE:?the system must say where its site-packages is}"
 mkdir -p "$_site"
 if [ "${BS_whole_tree:-}" != "" ]; then
-  cp -r . "$_site/"
+  cp -rf . "$_site/"
 else
   for _m in ${BS_modules:?a python recipe must name its modules}; do
-    cp -r "$_m" "$_site/"
+    cp -rf "$_m" "$_site/"
   done
 fi
 for _l in ${BS_licenses:-}; do
   for _m in ${BS_modules:-}; do
-    [ -f "$_l" ] && cp "$_l" "$_site/${_m##*/}/" || true
+    [ -f "$_l" ] && cp -f "$_l" "$_site/${_m##*/}/" || true
   done
 done
 for _s in ${BS_scripts:-}; do
   mkdir -p "$PREFIX/bin"
-  cp "${_s%%:*}" "$PREFIX/bin/${_s##*:}"
+  cp -f "${_s%%:*}" "$PREFIX/bin/${_s##*:}"
   chmod +x "$PREFIX/bin/${_s##*:}"
 done""",
         "doc": """# A recipe says `buildsystem = "python"` when a package is nothing but Python
@@ -934,6 +934,16 @@ def port_package(src_dir, dst_dir):
                     part = bs["pre"] if key == "pre" else bs["build"]
                     if part:
                         text = "\n".join(part).rstrip("\n")
+                        if name == "m4" and key == "build":
+                            # v1 touches m4.1 so the man page is not regenerated.
+                            # The info pages need the same, for the same reason:
+                            # there is no makeinfo on the host, and m4's tarball
+                            # ships them ready-made.
+                            text = text.replace("touch doc/m4.1",
+                                                "touch doc/m4.1 doc/m4.info*")
+                            REPORT.add("m4/generic.lua",
+                                       "the shipped info pages are touched, not rebuilt",
+                                       "no makeinfo on the host, and the tarball ships them")
                         lines.append('%s = """' % label)
                         lines.append(toml_esc(text))
                         lines.append('"""')
