@@ -1,5 +1,6 @@
 #include "system.h"
 
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -365,6 +366,19 @@ static void emit_quoted(FILE *out, const char *value) {
     fputc('"', out);
 }
 
+/* Does this fragment value read $name (or ${name})? */
+static int value_uses(const emit_t *e, const char *name) {
+    size_t n = strlen(name);
+    for (const char *p = e->value; (p = strchr(p, '$')) != NULL; p++) {
+        const char *q = p + 1;
+        if (*q == '{')
+            q++;
+        if (strncmp(q, name, n) == 0 && q[n] != '_' && !isalnum((unsigned char)q[n]))
+            return 1;
+    }
+    return 0;
+}
+
 void system_emit(const system_t *s, FILE *out) {
     for (size_t f = 0; f < s->ndocs; f++) {
         const char *file = s->files[f];
@@ -381,24 +395,46 @@ void system_emit(const system_t *s, FILE *out) {
                 fputc('\n', out);
             free(text);
         }
-        /* Then the variables, with one export line for the file. */
         strlist_t names;
         strlist_init(&names);
-        for (size_t i = 0; i < s->nemits; i++) {
+        /* Then the variables, with one export line for the file. A value may use
+         * another value in the same file (`CMAKE_FLAGS` uses `CMAKE_MAKE_PROGRAM`),
+         * and v1 wrote the definition first. Merging a fragment's appends into one
+         * value can put the user before the definition, so order them by what they
+         * use and keep the fragment's own order everywhere else. */
+        size_t order[64];
+        size_t norder = 0;
+        for (size_t i = 0; i < s->nemits && norder < 64; i++) {
             emit_t *e = &s->emits[i];
-            if (e->kind != EMIT_VAR || strcmp(e->file, file) != 0)
+            if (e->kind != EMIT_VAR || e->multiline || strcmp(e->file, file) != 0)
                 continue;
-            if (e->multiline) {
-                /* Raw shell, as written: the fragment exports what it needs. */
-                char *text = system_expand(s, e->value, e->file);
-                if (text == NULL)
-                    continue;
-                fputs(text, out);
-                if (text[0] != '\0' && text[strlen(text) - 1] != '\n')
-                    fputc('\n', out);
-                free(text);
-                continue;
+            order[norder++] = i;
+        }
+        for (size_t done = 0; done < norder; done++) {
+            size_t pick = done;
+            for (size_t k = done; k < norder; k++) {
+                int ready = 1;
+                for (size_t j = 0; j < norder && ready; j++) {
+                    if (j == k || !value_uses(&s->emits[order[k]], s->emits[order[j]].name))
+                        continue;
+                    int already = 0;
+                    for (size_t m = 0; m < done; m++)
+                        if (order[m] == order[j])
+                            already = 1;
+                    if (!already)
+                        ready = 0;
+                }
+                if (ready) {
+                    pick = k;
+                    break;
+                }
             }
+            size_t swap = order[done];
+            order[done] = order[pick];
+            order[pick] = swap;
+        }
+        for (size_t o = 0; o < norder; o++) {
+            emit_t *e = &s->emits[order[o]];
             char *text = system_expand(s, e->value, e->file);
             if (text == NULL)
                 continue;
@@ -407,6 +443,19 @@ void system_emit(const system_t *s, FILE *out) {
             fputc('\n', out);
             free(text);
             strlist_add(&names, e->name);
+        }
+        /* Values written as raw shell keep their place in the fragment. */
+        for (size_t i = 0; i < s->nemits; i++) {
+            emit_t *e = &s->emits[i];
+            if (e->kind != EMIT_VAR || !e->multiline || strcmp(e->file, file) != 0)
+                continue;
+            char *text = system_expand(s, e->value, e->file);
+            if (text == NULL)
+                continue;
+            fputs(text, out);
+            if (text[0] != '\0' && text[strlen(text) - 1] != '\n')
+                fputc('\n', out);
+            free(text);
         }
         if (names.n > 0) {
             fputs("export", out);
