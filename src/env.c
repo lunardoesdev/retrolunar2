@@ -149,6 +149,37 @@ void env_lines(const graph_t *g, size_t idx, int include_self, strlist_t *out) {
     }
 
     char *deps_v = join(&deps, " ");
+
+    /* One variable per direct dependency, so a recipe can point a build system
+     * at a specific dependency: `--with-zlib="$zlib_PREFIX"`. v1's single
+     * $PREFIX is gone, and this is what replaces it in a ported recipe. Names
+     * are shell identifiers, so punctuation becomes underscores. */
+    strlist_t perdep, perdep_assign;
+    strlist_init(&perdep);
+    strlist_init(&perdep_assign);
+    for (size_t d = 0; d < deps.n; d++) {
+        const char *dir = deps.v[d]; /* $NESTDIR/name@sys */
+        const char *at = strrchr(dir, '@');
+        const char *slash = strrchr(dir, '/');
+        if (at == NULL || slash == NULL)
+            continue;
+        const char *nm = slash + 1;
+        char var[256];
+        size_t k = 0;
+        for (const char *q = nm; q < at && k < sizeof var - 8; q++)
+            var[k++] = (*q == '-' || *q == '.' || *q == '+') ? '_' : *q;
+        var[k] = '\0';
+        strncat(var, "_PREFIX", sizeof var - strlen(var) - 1);
+        strlist_add_own(&perdep_assign, fmt_alloc("%s=\"%s\"", var, dir));
+        strlist_add_own(&perdep, xstrdup(var));
+    }
+    /* Ownership moves to `out`: freeing the list here would free the strings
+     * that are now in it. */
+    for (size_t i = 0; i < perdep_assign.n; i++)
+        strlist_add_own(out, perdep_assign.v[i]);
+    free(perdep_assign.v);
+    perdep_assign.v = NULL;
+    perdep_assign.n = perdep_assign.cap = 0;
     char *inc_v = join(&inc, " ");
     char *lib_v = join(&lib, " ");
     char *pkg_v = join(&pkgcfg, ":");
@@ -162,20 +193,51 @@ void env_lines(const graph_t *g, size_t idx, int include_self, strlist_t *out) {
     /* An empty contribution is left out entirely: a line that only says
      * `CPPFLAGS="$CPPFLAGS"` is noise in a script the user is meant to read. */
     strlist_add_own(out, fmt_alloc("DEPS=\"%s\"", deps_v));
+    /* Every variable is defined even when this node has no dependencies: a system
+     * fragment expands $CPPFLAGS and friends, and the script runs under `set -u`.
+     * The `:-` form also keeps a caller's own value. */
     if (inc_v[0] != '\0')
         strlist_add_own(out, prepend("CPPFLAGS", inc_v, " "));
+    else
+        strlist_add(out, "CPPFLAGS=\"${CPPFLAGS:-}\"");
     if (lib_v[0] != '\0')
         strlist_add_own(out, prepend("LDFLAGS", lib_v, " "));
+    else
+        strlist_add(out, "LDFLAGS=\"${LDFLAGS:-}\"");
     if (pkg_v[0] != '\0')
         strlist_add_own(out, prepend("PKG_CONFIG_LIBDIR", pkg_v, ":"));
+    else
+        strlist_add(out, "PKG_CONFIG_LIBDIR=\"${PKG_CONFIG_LIBDIR:-}\"");
     /* Always set: our .pc files are the only ones that count. */
     strlist_add(out, "PKG_CONFIG_PATH=\"\"");
     if (cmake_v[0] != '\0')
         strlist_add_own(out, prepend("CMAKE_PREFIX_PATH", cmake_v, ";"));
+    else
+        strlist_add(out, "CMAKE_PREFIX_PATH=\"${CMAKE_PREFIX_PATH:-}\"");
     if (path_v[0] != '\0')
         strlist_add_own(out, prepend("PATH", path_v, ":"));
+    else
+        strlist_add(out, "PATH=\"${PATH:-}\"");
     if (ld_v[0] != '\0')
         strlist_add_own(out, prepend("LD_LIBRARY_PATH", ld_v, ":"));
+    else
+        strlist_add(out, "LD_LIBRARY_PATH=\"${LD_LIBRARY_PATH:-}\"");
+    if (perdep.n == 0)
+        strlist_add(out, "PKG_CONFIG_PATH=\"${PKG_CONFIG_PATH:-}\"");
+    if (perdep.n > 0) {
+        char *line = xmalloc(64);
+        size_t cap = 64, len = 0;
+        len += (size_t)snprintf(line, cap, "export");
+        for (size_t i = 0; i < perdep.n; i++) {
+            while (len + strlen(perdep.v[i]) + 2 > cap) {
+                cap *= 2;
+                line = xrealloc(line, cap);
+            }
+            len += (size_t)snprintf(line + len, cap - len, " %s", perdep.v[i]);
+        }
+        strlist_add_own(out, line);
+        strlist_free(&perdep);
+    }
     strlist_add(out, "export DEPS CPPFLAGS LDFLAGS PKG_CONFIG_LIBDIR PKG_CONFIG_PATH "
                      "CMAKE_PREFIX_PATH PATH LD_LIBRARY_PATH");
 
