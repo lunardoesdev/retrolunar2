@@ -91,15 +91,19 @@ static char *dot_join(const char *prefix, const char *key) {
  * which makes the whole system load fail: a half-read system would emit a
  * script that builds something other than what the files say. */
 static void walk(toml_datum_t tab, const char *prefix, int pass, const char *file,
-                 system_t *mutable_s, int *bad) {
+                 system_t *mutable_s, int *bad, int fill) {
     toml_iter_t it;
     toml_iter_init(&it, tab);
     const char *key;
     toml_datum_t v;
     while (toml_iter_next(&it, &key, &v)) {
         char *path = dot_join(prefix, key);
+        if (fill && system_sym(mutable_s, path) != NULL) {
+            free(path);
+            continue; /* the system's own value wins; the definition fills gaps */
+        }
         if (v.type == TOML_TABLE) {
-            walk(v, path, pass, file, mutable_s, bad);
+            walk(v, path, pass, file, mutable_s, bad, fill);
             free(path);
             continue;
         }
@@ -134,14 +138,32 @@ static void walk(toml_datum_t tab, const char *prefix, int pass, const char *fil
                 }
                 mutable_s->has_probe = 1;
             } else {
-                toml_err(v, "unknown array '%s' (arrays are only allowed as "
-                            "fallbacks and probe)", path);
-                *bad = 1;
+                strlist_t items;
+                strlist_init(&items);
+                for (int i = 0; i < v.u.arr.size; i++) {
+                    toml_datum_t e = v.u.arr.elem[i];
+                    if (e.type != TOML_STRING) {
+                        toml_err(e, "'%s[%d]' must be a string", path, i);
+                        *bad = 1;
+                    } else {
+                        strlist_add(&items, e.u.str.ptr);
+                    }
+                }
+                char *joined = join_sp(&items);
+                strlist_free(&items);
+                /* A system's own value wins over a definition's. */
+                if (!fill || system_sym(mutable_s, path) == NULL)
+                    symtab_add(mutable_s, path, joined, file, v.lineno);
+                free(joined);
             }
             free(path);
             continue;
         }
-        if (strcmp(key, "script") == 0) {
+        if (strcmp(path, "script") == 0) {
+            if (fill) {
+                free(path);
+                continue;
+            }
             if (pass == 1) {
                 if (v.type != TOML_STRING) {
                     toml_err(v, "'script' must be a string");
@@ -174,7 +196,16 @@ static void walk(toml_datum_t tab, const char *prefix, int pass, const char *fil
         }
         if (symtab_add(mutable_s, path, text, file, v.lineno) != 0)
             *bad = 1;
-        emit_add(mutable_s, EMIT_VAR, name, text, file, v.lineno);
+        /* `buildsystem.<name>.script` (and its pre/post) is the build system's
+         * own text: the emitter splices it where the recipe asks for that build
+         * system, so it must not also appear as a shell variable. */
+        int is_bs_text = strncmp(path, "buildsystem.", 12) == 0 &&
+                         (strcmp(name, "script") == 0 || strcmp(name, "pre") == 0 ||
+                          strcmp(name, "post") == 0);
+        /* Also in fill mode: a default the definition supplies is a variable
+         * like any other. It only gets here when the system had no such key. */
+        if (!is_bs_text)
+            emit_add(mutable_s, EMIT_VAR, name, text, file, v.lineno);
         free(text);
         free(path);
     }
@@ -239,8 +270,8 @@ int system_load(const char *packages, const char *name, system_t *out) {
     if (rc == 0) {
         int bad = 0;
         for (size_t i = 0; i < out->ndocs; i++) {
-            walk(toml_doc_root(&out->docs[i]), "", 0, out->files[i], out, &bad);
-            walk(toml_doc_root(&out->docs[i]), "", 1, out->files[i], out, &bad);
+            walk(toml_doc_root(&out->docs[i]), "", 0, out->files[i], out, &bad, 0);
+            walk(toml_doc_root(&out->docs[i]), "", 1, out->files[i], out, &bad, 0);
         }
         if (bad)
             rc = -1;
@@ -281,6 +312,7 @@ void system_free(system_t *s) {
 /* --- ${...} expansion ---------------------------------------------------- */
 
 char *system_expand(const system_t *s, const char *text, const char *where) {
+    (void)where;
     size_t cap = strlen(text) + 64, n = 0;
     char *out = xmalloc(cap);
     const char *p = text;
@@ -303,16 +335,10 @@ char *system_expand(const system_t *s, const char *text, const char *where) {
                     p = end + 1;
                     continue;
                 }
-                if (!is_ident(name)) {
-                    fprintf(stderr,
-                            "retrolunar: %s: unknown symbol '${%s}'\n"
-                            "  symbols are the merged keys of the system's TOML files\n",
-                            where, name);
-                    free(name);
-                    free(out);
-                    return NULL;
-                }
-                /* A plain shell variable: left for the script to expand. */
+                /* Anything else is shell's business: parameter expansion with
+                 * defaults or suffixes, or a plain variable this tool has never
+                 * heard of. The script is made to be edited, so the shell, not
+                 * this program, decides what its own syntax means. */
                 free(name);
             }
         }
