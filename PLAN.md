@@ -44,6 +44,30 @@ adding a segment (`export` cannot do it today without risking the file, see the 
   prefix holds all dependencies.
 - Freshness is content hashes plus optional environment probes, never mtimes.
 
+## Build systems
+
+A recipe names the build system it wants and gives only what is its own business:
+
+```toml
+# zlib/generic.toml
+deps = ["zlib@source"]
+buildsystem = "cmake"
+# Only the library is used; the examples cannot run on the build host.
+args = ["-DZLIB_BUILD_EXAMPLES=OFF"]
+```
+
+`cmake`, `autoconf`, `meson`, `make`, `cargo` and `xmake` exist, plus the shell body a
+recipe can carry instead. A package's fields become `$BS_*` variables — `args`,
+`source_dir`, `features`, `bin`, whatever the script asks for — and a recipe's `pre` and
+`post` are shell that runs around the standard steps, which is where its own preparation
+belongs.
+
+The commands themselves are data too: `buildsystem = "cmake"` means "use the `script` in
+this system's `[buildsystem.cmake]`", and nothing in the tool knows what cmake is. That is
+also why a build system lives in a system and nowhere else: the fingerprint of the system
+directory then covers the driver, and a reader sees the whole script without following any
+inheritance.
+
 ## Formats
 
 Package directory:
@@ -65,11 +89,12 @@ System directory, named `system@<name>` (`system@clang-native`, `system@mingw64`
 
 ```
 system@clang-native/
-  system.toml     identity: os, arch, triplets, fallbacks, tools, host system
-  autoconf.toml   [buildsystem.autoconf] -> $AUTOCONF_CONFIGURE_FLAGS
-  cmake.toml      [buildsystem.cmake]    -> $CMAKE_FLAGS, toolchain file
-  meson.toml      [buildsystem.meson]    -> $MESON_FLAGS, cross file
-  cargo.toml      cargo's cross variables
+  system.toml     identity: os, arch, triplets, fallbacks, probes
+  autoconf.toml   [buildsystem.autoconf] -> its settings and its script
+  cmake.toml      [buildsystem.cmake]    -> $CMAKE_FLAGS, toolchain file, script
+  meson.toml      [buildsystem.meson]    -> $MESON_FLAGS, cross file, script
+  cargo.toml      cargo's cross variables and its script
+  make.toml       what a plain make build looks like here
   *.cmake, *.ini  companion files referenced by name
 ```
 
