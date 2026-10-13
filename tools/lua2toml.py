@@ -1008,6 +1008,33 @@ def stage_installs(text, pkg=None):
     return text.replace("$OUTPKG", "$PREFIX")
 
 
+def add_origin_rpath(lines, name):
+    """Give every ELF system an $ORIGIN runtime path.
+
+    A library finds its neighbours by the path it is run from, not by the build
+    prefix: that is what makes an exported bundle a copy rather than a patch.
+    mingw32 is left alone — a PE file has no such notion, and the Windows loader
+    already looks beside the .exe, which is where the bundle puts it."""
+    host_os = None
+    for l in lines:
+        m = re.match(r'HOST_OS = "([^"]*)"', l)
+        if m:
+            host_os = m.group(1)
+    if host_os == "mingw32":
+        return lines
+    for i, l in enumerate(lines):
+        m = re.match(r'(LDFLAGS = ")(.*)("\s*)$', l)
+        if not m:
+            continue
+        if "rpath" in m.group(2):
+            return lines
+        lines[i] = "%s%s -Wl,-rpath,$ORIGIN%s" % (m.group(1), m.group(2), m.group(3))
+        REPORT.add(f"{name}/system.toml", "built with $ORIGIN in its runtime path",
+                   "so an exported bundle of it is a copy, not a patch")
+        return lines
+    return lines
+
+
 def shell_line(s):
     """Is this a line the shell has to run, rather than a plain value?"""
     return (s.startswith(":") or re.match(r'^(if|for|while|case|unset|exit|_|eval)\b', s)
@@ -1220,7 +1247,7 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
         sys_lines.append('script = """\n' + script.strip("\n") + '\n"""')
     if buckets["system"]:
         sys_lines.append("")
-        sys_lines.extend(buckets["system"])
+        sys_lines.extend(add_origin_rpath(buckets["system"], name))
     with open(os.path.join(out_dir, "system.toml"), "w") as f:
         f.write("[system]\n" + "\n".join(sys_lines).rstrip("\n") + "\n")
 
@@ -1592,7 +1619,7 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
         sys_lines.append('script = """\n' + script.strip("\n") + '\n"""')
     if buckets["system"]:
         sys_lines.append("")
-        sys_lines.extend(buckets["system"])
+        sys_lines.extend(add_origin_rpath(buckets["system"], name))
     with open(os.path.join(out_dir, "system.toml"), "w") as f:
         f.write("[system]\n" + "\n".join(sys_lines).rstrip("\n") + "\n")
 
