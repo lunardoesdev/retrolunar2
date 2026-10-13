@@ -160,6 +160,13 @@ FIXUPS = [
     (r'(^|-)mingw\d+$|^mingw\d+$',
      r'--cross-file \$MESON_CROSS_FILE ?', "",
      "the meson driver passes the system's own MESON_CROSS_FILE"),
+    (("expect", "generic.toml"),
+     r'\$NATIVE_PREFIX/bin/tclsh8\.6', '$tcl_HOST_PREFIX/bin/tclsh8.6',
+     "v1's shared native prefix is the host tcl's own directory in v2"),
+    (("expect", "generic.toml"),
+     r'# why it must not point at \$NATIVE_PREFIX\.',
+     "# why it must not point at the host's tcl: $tcl_HOST_PREFIX.",
+     "the comment named the v1 prefix"),
     (("libpng", "generic.toml"),
      r'# mingw zlib installs as libzlib \(not libz\), but configure\'s\n'
      r'# zlib probe hardcodes -lz \(LIBS env can\'t override it: the\n'
@@ -426,8 +433,12 @@ for _f in aclocal.m4 configure config.h.in; do
   [ -f "$_f" ] && touch "$_f"
 done
 find . -name 'Makefile.in' -exec touch {} + 2>/dev/null || true
-make -j"$CORES" $BS_targets
-make $BS_install_args install""",
+if [ "$BS_make" != "false" ]; then
+  make -j"$CORES" $BS_make_args $BS_targets
+fi
+if [ "$BS_install" != "false" ]; then
+  make $BS_install_args install
+fi""",
         "doc": """# A recipe says `buildsystem = "autoconf"` and gives:
 #   configure_args  extra arguments for ./configure
 #   targets         arguments for the build step
@@ -449,7 +460,9 @@ ninja -C build -j "$CORES" install""",
     },
     "make": {
         "defaults": {},
-        "script": """make -j"$CORES" CC="$CC" AR="$AR" RANLIB="$RANLIB" CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS" $BS_make_args $BS_targets
+        "script": """if [ "$BS_make" != "false" ]; then
+  make -j"$CORES" CC="$CC" AR="$AR" RANLIB="$RANLIB" CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LDFLAGS="$LDFLAGS" $BS_make_args $BS_targets
+fi
 if [ "$BS_install" != "false" ]; then
   DESTDIR="$DESTDIR" make CC="$CC" AR="$AR" RANLIB="$RANLIB" $BS_install_args install
 fi""",
@@ -504,6 +517,10 @@ MAKE_LINE = re.compile(r'^make\s+(.*)$')
 CARGO_LINE = re.compile(r'^((?:[A-Za-z_][A-Za-z0-9_]*="[^"]*"\s+)*)cargo\s+build\s+(.*)$')
 TOUCH_FIX = re.compile(r'^(touch\s+aclocal\.m4|find\s+\.\s+-name\s+.Makefile\.in)')
 SOURCE_COPY = re.compile(r'^cp\s+-r\s+\$NESTDIR/[A-Za-z0-9._+-]+@source/\*\s+\.\s*$')
+
+
+PLAIN_MAKE = re.compile(r'^make(?: -j"\$CORES")?$')
+PLAIN_INSTALL = re.compile(r'^make(?: -j"\$CORES")? install$')
 
 
 def words(text):
@@ -613,6 +630,17 @@ def port_buildsystem(body, path):
         if len(conf) != 1:
             return {"name": None, "fields": {}, "pre": [], "build": lines,
                     "why": "more than one configure invocation"}
+        # The driver runs configure, make and make install. What a recipe adds
+        # keeps its place: curl installs piece by piece, m4 builds its
+        # subdirectories first, and upstream's Makefile is the only thing that
+        # knows why. Only the pair the driver would run anyway is taken out.
+        makes = [(i, c) for i, c in cmds if c.split()[0] == "make"]
+        if len(makes) >= 2 and PLAIN_MAKE.match(makes[0][1]) and \
+           PLAIN_INSTALL.match(makes[1][1]):
+            drop.update({makes[0][0], makes[1][0]})
+        elif makes:
+            fields["make"] = False
+            fields["install"] = False
         for i, c in cmds:
             m = CONFIGURE_LINE.match(c)
             if m:
@@ -628,17 +656,6 @@ def port_buildsystem(body, path):
             if TOUCH_FIX.match(c):
                 drop.add(i)
                 continue
-            if MAKE_LINE.match(c) and c.split()[0] == "make":
-                toks = words(c[5:].strip()) or []
-                toks = [t for t in toks if t != '-j"$CORES"' and t != "-j$CORES"]
-                if not toks or toks == ["install"]:
-                    drop.add(i)
-                    if toks == ["install"]:
-                        install_lines += 1
-                    continue
-                # A build step with its own arguments is not the driver's shape.
-                return {"name": None, "fields": {}, "pre": [], "build": lines,
-                        "why": "autotools with a hand-written make step"}
 
     elif name == "meson":
         for i, c in cmds:
@@ -657,10 +674,13 @@ def port_buildsystem(body, path):
                 drop.add(i)
 
     elif name == "make":
-        makes = [i for i, c in cmds if MAKE_LINE.match(c) and c.split()[0] == "make"]
-        if len(makes) > 2:
-            return {"name": None, "fields": {}, "pre": [], "build": lines,
-                    "why": "more than two make invocations"}
+        makes = [(i, c) for i, c in cmds if c.split()[0] == "make"]
+        if len(makes) >= 2 and PLAIN_MAKE.match(makes[0][1]) and \
+           PLAIN_INSTALL.match(makes[1][1]):
+            drop.update({makes[0][0], makes[1][0]})
+        elif makes:
+            fields["make"] = False
+            fields["install"] = False
         for i, c in cmds:
             if not (MAKE_LINE.match(c) and c.split()[0] == "make"):
                 continue
