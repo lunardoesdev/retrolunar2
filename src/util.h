@@ -12,6 +12,11 @@
  * would have to abort anyway. */
 void *xmalloc(size_t n);
 void *xrealloc(void *p, size_t n);
+
+/* Remove a directory and everything under it; 0 on success, and a path that is
+ * not there is success too. Only the tool's own directories are ever passed
+ * here: a store entry, an unpacking directory, an archive being thrown away. */
+int remove_tree(const char *path);
 char *xstrdup(const char *s);
 char *xstrndup(const char *s, size_t n);
 

@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "config.h"
@@ -29,7 +30,17 @@ static void hash_dir(sha256_t *h, const char *dir, const char *prefix) {
         } else if (is_file(full)) {
             char hex[65];
             if (sha256_file_hex(full, hex) == 0) {
-                sha256_update(h, "file:", 5);
+                /* Whether a file is executable is part of what it is: a cache
+                 * that gave back a `bin/m4` without the bit would hand out a
+                 * package that does not run, and the digest has to notice. The
+                 * other permission bits are left out because they follow the
+                 * umask, and a fingerprint that moves with the umask would
+                 * rebuild the world on another machine. */
+                struct stat st;
+                const char *kind = "file:";
+                if (stat(full, &st) == 0 && (st.st_mode & S_IXUSR) != 0)
+                    kind = "file+x:";
+                sha256_update(h, kind, strlen(kind));
                 sha256_update(h, rel, strlen(rel));
                 sha256_update(h, " ", 1);
                 sha256_update(h, hex, 64);

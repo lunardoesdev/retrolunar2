@@ -53,7 +53,7 @@ char *package_build_file(const char *packages, const char *name, const char *sys
  * build: where its packages come from, and (once there is a cache) where built
  * ones are kept. */
 static int manifest_table(const char *key) {
-    return strcmp(key, "shell") == 0 || strcmp(key, "repo") == 0;
+    return strcmp(key, "shell") == 0 || strcmp(key, "repo") == 0 || strcmp(key, "cache") == 0;
 }
 
 static int load_doc(const char *file, pkg_t *out) {

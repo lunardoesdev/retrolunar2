@@ -91,6 +91,21 @@ int manifest_find(const char *dir, manifest_t *out) {
             e->rev = rev != NULL ? xstrdup(rev) : NULL;
         }
     }
+    toml_datum_t cache = toml_opt_table(root, "cache");
+    if (cache.type != TOML_UNKNOWN) {
+        static const char *const known[] = {"url", NULL};
+        if (toml_check_keys(cache, known, "cache") != 0) {
+            toml_doc_free(&doc);
+            return -1;
+        }
+        const char *url = toml_opt_str(cache, "url");
+        if (url == NULL) {
+            toml_err(cache, "cache: needs a url (a directory or an http(s) one)");
+            toml_doc_free(&doc);
+            return -1;
+        }
+        out->cache_url = xstrdup(url);
+    }
     toml_doc_free(&doc);
 
     out->dir = where;
@@ -106,6 +121,7 @@ void manifest_free(manifest_t *m) {
         free(m->repos.v[i].rev);
     }
     free(m->repos.v);
+    free(m->cache_url);
     free(m->dir);
     free(m->file);
     free(m->name);

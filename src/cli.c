@@ -11,7 +11,7 @@ static const struct {
 } COMMANDS[] = {
     {"install", CMD_INSTALL}, {"generate", CMD_GENERATE}, {"deps", CMD_DEPS},
     {"search", CMD_SEARCH},   {"env", CMD_ENV},           {"export", CMD_EXPORT},
-    {"shell", CMD_SHELL},     {"run", CMD_RUN},           {"build", CMD_BUILD},   {"gc", CMD_GC},
+    {"shell", CMD_SHELL},     {"run", CMD_RUN},           {"build", CMD_BUILD},   {"gc", CMD_GC},      {"cache", CMD_CACHE},
 };
 
 const char *cmd_name(enum cmd c) {
@@ -74,6 +74,14 @@ int cli_parse(int argc, char **argv, options_t *o) {
             o->output = value_of(argc, argv, &i, a);
             if (o->output == NULL)
                 return -1;
+            continue;
+        }
+        if (strcmp(a, "--cache") == 0) {
+            if (++i >= argc) {
+                fputs("retrolunar: --cache wants a directory or an http(s) url\n", stderr);
+                return -1;
+            }
+            o->cache = argv[i];
             continue;
         }
         if (strcmp(a, "--repo") == 0) {
@@ -170,6 +178,8 @@ void cli_usage(FILE *out, const char *prog) {
             "  build     the package this directory is: into the nest, or into\n"
             "            --out DIR, while its dependencies stay in the nest.\n"
             "  gc        remove store entries nothing points at.\n"
+            "  cache push|pull TARGET...  send built packages to a cache, or take\n"
+            "            them from it instead of building them (--cache DIR|URL).\n"
             "  export    collect a target's binaries and shared libraries plus what\n"
             "            they load, flat, into --to DIR, ready to hand over.\n"
             "\n"

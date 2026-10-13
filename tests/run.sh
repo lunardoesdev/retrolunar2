@@ -178,6 +178,37 @@ fi
 
 sh "$here/hashes.sh" "$PACKAGES" "$NEST" "$CHAIN"
 
+echo "=== the cache: built here, used there without building ==="
+CCACHE="$WORK/cache"
+CNEST="$WORK/cache-nest"
+rm -rf "$CCACHE" "$CNEST"
+"$RL" cache push --packages "$PACKAGES" --nest "$NEST" --cache "$CCACHE" "m4@$native" \
+    >"$WORK/cache-push.log" 2>&1 ||
+    { echo "cache push failed:"; tail -6 "$WORK/cache-push.log"; exit 1; }
+"$RL" cache pull --packages "$PACKAGES" --nest "$CNEST" --cache "$CCACHE" "m4@$native" \
+    >"$WORK/cache-pull.log" 2>&1 ||
+    { echo "cache pull failed:"; tail -6 "$WORK/cache-pull.log"; exit 1; }
+[ -x "$CNEST/m4@$native/bin/m4" ] ||
+    { echo "the pulled package did not arrive:"; cat "$WORK/cache-pull.log"; exit 1; }
+[ ! -e "$CNEST/m4@$native/.retrolunar" ] || true
+case "$("$CNEST/m4@$native/bin/m4" --version | head -1)" in
+*1.4.20*) ;;
+*) echo "the pulled package does not run:"; "$CNEST/m4@$native/bin/m4" --version; exit 1 ;;
+esac
+echo "an entry built here ran from another nest: $("$CNEST/m4@$native/bin/m4" --version | head -1)"
+
+# A cache is bytes from somewhere else: they have to be the bytes that were
+# published, and an entry that is not is refused rather than unpacked.
+CTAMPER="$WORK/cache-tamper"
+f=$(ls "$CCACHE"/*.tar.gz | head -1)
+printf 'x' >>"$f"
+rm -rf "$CTAMPER"
+"$RL" cache pull --packages "$PACKAGES" --nest "$CTAMPER" --cache "$CCACHE" "m4@$native" \
+    >"$WORK/cache-tamper.log" 2>&1
+grep -q 'does not match its digest' "$WORK/cache-tamper.log" ||
+    { echo "a tampered entry was not refused:"; cat "$WORK/cache-tamper.log"; exit 1; }
+echo "a tampered entry was refused: $(tail -1 "$WORK/cache-tamper.log" | sed 's/^retrolunar: //')"
+
 echo "=== a project: its own manifest, its own repositories, its own build ==="
 # A manifest is a recipe for the package this directory is, and the project
 # resolves against the repositories it names — checked here with the built-in
@@ -190,7 +221,7 @@ deps = ["zlib@$native"]
 
 build = """
 mkdir -p \"\$PREFIX/bin\"
-printf '#!/bin/sh\\necho proj from \$PREFIX\\n' > \"\$PREFIX/bin/proj\"
+printf '#!/bin/sh\\necho proj from %s\\n' \"\\$PREFIX\" > \"\\$PREFIX/bin/proj\"
 chmod +x \"\$PREFIX/bin/proj\"
 """
 

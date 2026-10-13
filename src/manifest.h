@@ -38,6 +38,7 @@ typedef struct {
     char *name;       /* the package's name: the directory's */
     strlist_t shell_deps; /* [shell] deps, empty when there is no such table */
     repolist_t repos;     /* [repo.*], in the order the file declares them */
+    char *cache_url;      /* [cache] url: where built packages are kept */
 } manifest_t;
 
 /* Look for a manifest in `dir` (NULL means the working directory).

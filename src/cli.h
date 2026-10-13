@@ -18,7 +18,8 @@ enum cmd {
     CMD_SHELL,
     CMD_RUN,
     CMD_BUILD,
-    CMD_GC
+    CMD_GC,
+    CMD_CACHE
 };
 
 typedef struct {
@@ -27,6 +28,7 @@ typedef struct {
     const char *nest;     /* --nest DIR */
     const char *output;   /* -o FILE, --output FILE */
     const char *to;       /* --to DIR, export only */
+    const char *cache;    /* --cache DIR|URL, for cache push and pull */
     strlist_t repos;      /* --repo NAME=URL[@REV], repeatable */
     int no_default_repo;  /* --no-default-repo */
     int cores;            /* --cores N, defaults to 1 */

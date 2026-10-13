@@ -1,3 +1,6 @@
+#define _GNU_SOURCE /* nftw's FTW_* flags */
+
+#include <ftw.h>
 #include "util.h"
 
 #include <dirent.h>
@@ -253,4 +256,18 @@ long long mtime_ns(const char *path) {
     if (stat(path, &st) != 0)
         return 0;
     return (long long)st.st_mtim.tv_sec * 1000000000LL + (long long)st.st_mtim.tv_nsec;
+}
+
+static int remove_one(const char *path, const struct stat *st, int flag, struct FTW *ftw) {
+    (void)st;
+    (void)flag;
+    (void)ftw;
+    return remove(path);
+}
+
+int remove_tree(const char *path) {
+    struct stat st;
+    if (lstat(path, &st) != 0)
+        return 0; /* nothing there is not a failure: it is the goal */
+    return nftw(path, remove_one, 16, FTW_DEPTH | FTW_PHYS) == 0 ? 0 : -1;
 }

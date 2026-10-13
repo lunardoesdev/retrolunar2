@@ -10,11 +10,8 @@
  * Nothing else is touched: state files, work directories and the local
  * directories `build --out` wrote to are not this command's business.
  */
-#define _GNU_SOURCE /* nftw's FTW_* flags */
-
 #include <dirent.h>
 #include <errno.h>
-#include <ftw.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,17 +22,6 @@
 #include "cmds.h"
 #include "tree.h"
 #include "util.h"
-
-static int remove_it(const char *path, const struct stat *st, int flag, struct FTW *ftw) {
-    (void)st;
-    (void)flag;
-    (void)ftw;
-    if (remove(path) != 0) {
-        fprintf(stderr, "retrolunar: cannot remove %s: %s\n", path, strerror(errno));
-        return -1;
-    }
-    return 0;
-}
 
 /* The store entry this path resolves to, or NULL when the path does not exist.
  * A name points into the store; anything else (a work directory, a state file)
@@ -95,7 +81,7 @@ int cmd_gc(const options_t *o) {
             free(p);
             continue;
         }
-        if (nftw(p, remove_it, 16, FTW_DEPTH | FTW_PHYS) != 0) {
+        if (remove_tree(p) != 0) {
             free(p);
             continue;
         }

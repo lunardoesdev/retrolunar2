@@ -95,6 +95,9 @@ int main(int argc, char **argv) {
     case CMD_GC:
         status = cmd_gc(&o);
         break;
+    case CMD_CACHE:
+        status = cmd_cache(&o);
+        break;
     case CMD_BUILD:
         status = cmd_build(&o);
         break;
