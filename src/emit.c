@@ -2,6 +2,8 @@
 
 #include "emit.h"
 
+#include <ctype.h>
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -95,6 +97,11 @@ static void emit_prelude(const graph_t *g, size_t i, FILE *out) {
 /* Recipe fields become shell variables, v1's rule: `version` and any other
  * scalar the file carries. */
 static void emit_recipe_vars(pkg_t *p, FILE *out) {
+    /* A build system's recipe gives its fields to the driver as $BS_*, so the
+     * plain names would be noise. A shell body is v1 code and still wants
+     * `$version` and friends as they were. */
+    if (p->buildsystem != NULL)
+        return;
     if (p->version != NULL) {
         char *v = sq(p->version);
         fprintf(out, "    version=%s\n", v);
@@ -105,6 +112,71 @@ static void emit_recipe_vars(pkg_t *p, FILE *out) {
         fprintf(out, "    %s=%s\n", p->vars.v[i].name, v);
         free(v);
     }
+}
+
+/* Every path whose change makes this node stale, as a list the shell can walk:
+ * the recipe files that take part, the files of the system (and the directory
+ * itself, so adding one counts), and the state files of the dependencies — a
+ * rebuild rewrites its state file, which is what carries the cascade. */
+static void collect_dir_files(const char *dir, strlist_t *out) {
+    strlist_add(out, dir);
+    strlist_t names;
+    strlist_init(&names);
+    list_dir(dir, &names);
+    strlist_sort(&names);
+    for (size_t i = 0; i < names.n; i++) {
+        char *p = path_join(dir, names.v[i]);
+        if (is_dir(p))
+            collect_dir_files(p, out);
+        else
+            strlist_add(out, p);
+        free(p);
+    }
+    strlist_free(&names);
+}
+
+static void emit_quick_inputs(const graph_t *g, size_t i, FILE *out) {
+    pkg_t *p = &g->nodes[i].pkg;
+    strlist_t ins;
+    strlist_init(&ins);
+    if (p->file != NULL)
+        strlist_add(&ins, p->file);
+    char *src = path_join(p->dir, "source.toml");
+    if (strcmp(p->sys, "source") != 0 && is_file(src))
+        strlist_add(&ins, src);
+    free(src);
+    if (strcmp(p->sys, "source") != 0) {
+        char *sysdir = str_concat("system@", p->sys);
+        char *full = path_join(g->packages, sysdir);
+        if (is_dir(full))
+            collect_dir_files(full, &ins);
+        free(full);
+        free(sysdir);
+    }
+    for (size_t k = 0; k < p->deps.n; k++) {
+        const char *at = strrchr(p->deps.v[k], '@');
+        char key[512];
+        if (at != NULL)
+            snprintf(key, sizeof key, "%s", p->deps.v[k]);
+        else
+            snprintf(key, sizeof key, "%s@%s", p->deps.v[k], p->sys);
+        char *dep = xstrdup(key);
+        char *dat = strrchr(dep, '@');
+        *dat = '\0';
+        fprintf(out, "    _dep=\"$NESTDIR/.retrolunar/state/%s/%s.toml\"\n", dat + 1, dep);
+        fputs("    [ \"$_dep\" -nt \"$_state\" ] && _quick=\"\"\n", out);
+        free(dep);
+    }
+    if (ins.n > 0) {
+        fputs("    for _in in", out);
+        for (size_t k = 0; k < ins.n; k++) {
+            char *q = sq(ins.v[k]);
+            fprintf(out, " %s", q);
+            free(q);
+        }
+        fputs("; do [ \"$_in\" -nt \"$_state\" ] && _quick=\"\" ; done\n", out);
+    }
+    strlist_free(&ins);
 }
 
 static void emit_state_path(const graph_t *g, size_t i, FILE *out) {
@@ -157,6 +229,129 @@ static void emit_body(pkg_t *p, FILE *out) {
         fputc('\n', out);
 }
 
+/* A recipe that names a build system is driven by that system's `script`, which
+ * lives in the system's namespace as `buildsystem.<name>.script` — from the
+ * system's own files, or from <packages>/buildsystems/<name>.toml. The recipe's
+ * fields become $BS_* variables, so the script knows what to build without this
+ * program knowing what cmake, meson, make or cargo are. */
+/* The source trees a node builds from: every @source dependency, copied into
+ * the work directory. v1's recipes each wrote this loop by hand; every one of
+ * them said the same thing, so the tool says it once and a recipe that needs to
+ * do something else sets `sources = false`. */
+static void emit_sources(const graph_t *g, size_t i, FILE *out) {
+    pkg_t *p = &g->nodes[i].pkg;
+    if (!p->sources)
+        return;
+    strlist_t sources;
+    strlist_init(&sources);
+    for (size_t k = 0; k < p->deps.n; k++) {
+        const char *at = strrchr(p->deps.v[k], '@');
+        if (at == NULL || strcmp(at, "@source") != 0)
+            continue;
+        char *nm = xstrndup(p->deps.v[k], (size_t)(at - p->deps.v[k]));
+        strlist_add_own(&sources, str_concat(str_concat("$NESTDIR/", nm), "@source"));
+        free(nm);
+    }
+    if (sources.n == 0) {
+        strlist_free(&sources);
+        return;
+    }
+    char *srcs = join_sp(&sources);
+    fprintf(out, "    BS_sources=\"%s\"\n", srcs);
+    free(srcs);
+    strlist_free(&sources);
+    fputs("    for _src in $BS_sources; do cp -r \"$_src\"/. . ; done\n", out);
+}
+
+static void emit_bs_vars(const graph_t *g, size_t i, FILE *out) {
+    pkg_t *p = &g->nodes[i].pkg;
+    for (size_t k = 0; k < p->vars.n; k++) {
+        const char *val = p->vars.v[k].value;
+        fputs("    BS_", out);
+        fputs(p->vars.v[k].name, out);
+        fputs("=\"", out);
+        for (const char *q = val; *q != '\0'; q++) {
+            if (*q == '"' || *q == '\\')
+                fputc('\\', out);
+            fputc(*q, out);
+        }
+        fputs("\"\n", out);
+    }
+}
+
+/* Every $BS_ name the build system's own script uses, so that one a recipe does
+ * not give is an empty variable instead of an unbound one under `set -u`. The
+ * names come from the script's text: this program still knows nothing about
+ * what any particular build system needs. */
+static int bs_name_used(const pkg_t *p, const char *name, size_t n) {
+    for (size_t k = 0; k < p->vars.n; k++)
+        if (strlen(p->vars.v[k].name) == n && strncmp(p->vars.v[k].name, name, n) == 0)
+            return 1;
+    return 0;
+}
+
+static void emit_bs_defaults(const pkg_t *p, const char *text, strlist_t *seen, FILE *out) {
+    for (const char *q = text; *q != '\0'; q++) {
+        if (q[0] != '$' || q[1] != 'B' || q[2] != 'S' || q[3] != '_')
+            continue;
+        size_t n = 4;
+        while (q[n] != '\0' && (isalnum((unsigned char)q[n]) || q[n] == '_'))
+            n++;
+        if (n == 4)
+            continue;
+        char name[256];
+        if (n >= sizeof name)
+            continue;
+        memcpy(name, q + 4, n - 4);
+        name[n - 4] = '\0';
+        if (bs_name_used(p, name, n - 4) || strlist_has(seen, name))
+            continue;
+        strlist_add(seen, name);
+        fprintf(out, "    BS_%s=\"${BS_%s:-}\"\n", name, name);
+    }
+}
+
+static void emit_build(const graph_t *g, size_t i, const system_t *sys, FILE *out) {
+    pkg_t *p = &g->nodes[i].pkg;
+    if (p->buildsystem == NULL || sys == NULL) {
+        emit_body(p, out);
+        return;
+    }
+    static const char *const parts[] = {"pre", "script", "post"};
+    char *keys[3] = {NULL, NULL, NULL};
+    char *texts[3] = {NULL, NULL, NULL};
+    strlist_t seen;
+    strlist_init(&seen);
+    fprintf(out, "    BS_NAME=\"%s\"\n", p->buildsystem);
+    for (size_t k = 0; k < 3; k++) {
+        char key[512];
+        snprintf(key, sizeof key, "buildsystem.%s.%s", p->buildsystem, parts[k]);
+        keys[k] = xstrdup(key);
+        const char *text = system_sym(sys, key);
+        if (text == NULL)
+            continue;
+        texts[k] = system_expand(sys, text, key);
+        if (texts[k] != NULL)
+            emit_bs_defaults(p, texts[k], &seen, out);
+    }
+    strlist_free(&seen);
+    emit_bs_vars(g, i, out);
+    for (size_t k = 0; k < 3; k++) {
+        if (texts[k] == NULL) {
+            free(keys[k]);
+            continue;
+        }
+        fputs(texts[k], out);
+        size_t n = strlen(texts[k]);
+        if (n > 0 && texts[k][n - 1] != '\n')
+            fputc('\n', out);
+        free(texts[k]);
+        free(keys[k]);
+    }
+    /* A recipe may still add shell of its own; it runs after the standard steps. */
+    emit_body(p, out);
+}
+
 static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
     pkg_t *p = &g->nodes[i].pkg;
     const system_t *sys = graph_system(g, p->sys);
@@ -169,7 +364,18 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
         emit_read_state(out, "probes", "_probes_stored");
 
     if (!probes) {
-        fprintf(out, "  if [ \"$_stored\" = '%s' ]; then\n", fps[i]);
+        /* The hashes decide, but they cost a read of every input on every run.
+         * If nothing is newer than the state file written by the last build,
+         * nothing can have changed — unless someone restored a file's
+         * timestamp, which is what RETROLUNAR_VERIFY=1 is for. */
+        fputs("  _quick=\"\"\n"
+              "  if [ -f \"$_state\" ] && [ -z \"${RETROLUNAR_VERIFY:-}\" ]; then\n"
+              "    _quick=1\n", out);
+        emit_quick_inputs(g, i, out);
+        fputs("  fi\n", out);
+        fputs("  if [ -n \"$_quick\" ]; then\n", out);
+        fprintf(out, "    echo \"skip %s@%s (fresh)\n\"\n", p->name, p->sys);
+        fprintf(out, "  elif [ \"$_stored\" = '%s' ]; then\n", fps[i]);
         fprintf(out, "    echo \"skip %s@%s (fresh)\"\n", p->name, p->sys);
         fputs("  else\n", out);
         emit_prelude(g, i, out);
@@ -182,7 +388,8 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
         if (sys != NULL)
             system_emit(sys, out);
         emit_recipe_vars(p, out);
-        emit_body(p, out);
+        emit_sources(g, i, out);
+        emit_build(g, i, sys, out);
         emit_publish(g, i, fps[i], out);
         fputs("  fi\n", out);
         return;
@@ -205,7 +412,8 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
     fprintf(out, "    echo \"skip %s@%s (fresh)\"\n", p->name, p->sys);
     fputs("  else\n", out);
     emit_recipe_vars(p, out);
-    emit_body(p, out);
+    emit_sources(g, i, out);
+    emit_build(g, i, sys, out);
     emit_publish(g, i, fps[i], out);
     fputs("  fi\n", out);
 }
@@ -263,6 +471,23 @@ static void emit_summary(const graph_t *g, FILE *out) {
 }
 
 int emit_script(const graph_t *g, const char *nestdir, int cores, FILE *out) {
+    for (size_t i = 0; i < g->n; i++) {
+        pkg_t *p = &g->nodes[i].pkg;
+        if (p->buildsystem == NULL)
+            continue;
+        const system_t *sys = graph_system(g, p->sys);
+        char key[512];
+        snprintf(key, sizeof key, "buildsystem.%s.script", p->buildsystem);
+        if (sys != NULL && system_sym(sys, key) != NULL)
+            continue;
+        fprintf(stderr,
+                "retrolunar: %s@%s: system '%s' defines no build system '%s'\n"
+                "  a build system belongs to the system: put a "
+                "`buildsystem.%s.script` key in %s/system@%s/%s.toml\n",
+                p->name, p->sys, p->sys, p->buildsystem, p->buildsystem,
+                g->packages, p->sys, p->buildsystem);
+        return -1;
+    }
     char **fps = fingerprint_nodes(g);
     emit_header(nestdir, g->packages, cores, out);
     for (size_t i = 0; i < g->n; i++)
