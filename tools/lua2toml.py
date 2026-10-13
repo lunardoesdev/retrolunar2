@@ -42,6 +42,38 @@ BUILDSYSTEM_BY_PREFIX = [
     ("PKG_CONFIG_ALLOW_CROSS", "cargo"),
 ]
 
+# mingw64/mingw32 are what those toolchains are called, so the directory says
+# which one it is. The native system keeps its name: `@native` is a target alias
+# the CLI resolves, and a system called `native` would make that ambiguous.
+RENAMES = {
+    "x86_64-mingw": "mingw64",
+    "i686-mingw": "mingw32",
+}
+
+
+# Cargo spells host triples its own way, and it is the only thing that can name a
+# native target: `--target x86_64-pc-linux-gnu` is not a rust triple.
+HOST_ARCH = "x86_64"
+RUST_TRIPLE = {"x86_64": "x86_64-unknown-linux-gnu", "aarch64": "aarch64-unknown-linux-gnu"}
+
+
+def is_system_file(text):
+    """A system's generic.lua calls `return system({...})` at the top level.
+
+    A substring test is not good enough: cairo's recipe comments on meson's
+    `host_machine.system() == 'darwin'`, and that made the port treat a package
+    as a system."""
+    return re.search(r'(?m)^\s*return\s+system\s*\(', text) is not None
+
+
+def is_recipe_file(text):
+    return re.search(r'(?m)^\s*return\s+recipe\s*\(', text) is not None
+
+
+def rename(name):
+    return RENAMES.get(name, name)
+
+
 # Lines a system used to build its search paths, now the emitter's job.
 CLOSURE_PATTERNS = [
     re.compile(r'^PKG_CONFIG_LIBDIR="\$PREFIX/(lib|share)/pkgconfig"\s*$'),
@@ -116,7 +148,7 @@ FIXUPS = [
     (("libpng", "generic.toml"), r' --with-zlib-prefix="\$\{RETROLUNAR_PORT_PREFIX\}"', "",
      "the closure's -I and -L flags already point at zlib's directory"),
     # Systems: the same flag, in the two mingw cmake fragments.
-    (r'^\w+-mingw$', r'-DZLIB_ROOT=\$\{RETROLUNAR_PORT_SYSTEM_PREFIX\}', "",
+    (r'^(mingw32|mingw64)$', r'-DZLIB_ROOT=\$\{RETROLUNAR_PORT_SYSTEM_PREFIX\}', "",
      "CMAKE_PREFIX_PATH from the closure points at the dependency directories already"),
 ]
 
@@ -336,7 +368,7 @@ def port_package(src_dir, dst_dir):
         if entry == "stage1.md":
             continue
         fields, deps, order = parse_recipe(path)
-        out_name = entry[:-4] + ".toml"
+        out_name = rename(entry[:-4]) + ".toml"
         if entry == "generic.lua":
             out_name = "generic.toml"
         if entry == "source.lua":
@@ -416,6 +448,10 @@ def section_kind(marker, line):
     for prefix, bs in BUILDSYSTEM_BY_PREFIX:
         if var.startswith(prefix):
             return bs
+    # `ac_cv_*`/`gl_cv_*` are configure's cache: they belong next to the rest of
+    # autoconf's settings, not in the system's base facts.
+    if re.match(r'^(ac|gl|gt)_cv_', var) or re.match(r'^[a-z_]+_cv_', var):
+        return "autoconf"
     if var in ("CC_aarch64_linux_android", "CFLAGS_aarch64_linux_android",
                "CXX_aarch64_linux_android", "CXXFLAGS_aarch64_linux_android") or \
        re.match(r'(CC|CFLAGS|CXX|CXXFLAGS)_[a-z0-9_]+$', var):
@@ -426,12 +462,12 @@ def section_kind(marker, line):
 
 
 def port_system(src_dir, dst_root, native_name):
-    name = os.path.basename(src_dir.rstrip("/"))
+    name = rename(os.path.basename(src_dir.rstrip("/")))
     out_dir = os.path.join(dst_root, "system@" + name)
     os.makedirs(out_dir, exist_ok=True)
 
     fields, deps, order = parse_recipe(os.path.join(src_dir, "generic.lua"))
-    fallbacks = re.findall(r'"([^"]+)"', fields.get("recipe_fallbacks", ""))
+    fallbacks = [rename(f) for f in re.findall(r'"([^"]+)"', fields.get("recipe_fallbacks", ""))]
 
     buckets = {"system": [], "autoconf": [], "cmake": [], "meson": [], "cargo": [],
                "script": []}
@@ -526,10 +562,10 @@ def port_system(src_dir, dst_root, native_name):
     sys_lines = []
     if fallbacks:
         sys_lines.append("fallbacks = [" + ", ".join('"%s"' % f for f in fallbacks) + "]")
-    if name != native_name:
-        # Host helper programs come from the native system, named explicitly now that v1's
-        # implicit "the whole native prefix is on PATH" is gone.
-        sys_lines.append(f'host = "{native_name}"')
+    # No host key: v1 had none, and it needs none. A build that needs a host
+    # program either names it as a dependency (`m4@native`, whose directory the
+    # emitter puts on PATH) or uses the one already in the user's PATH, which is
+    # what every v1 cross system did.
     if buckets["script"]:
         script = toml_esc("\n".join(buckets["script"] + pending))
         sys_lines.append("")
@@ -540,6 +576,13 @@ def port_system(src_dir, dst_root, native_name):
     with open(os.path.join(out_dir, "system.toml"), "w") as f:
         f.write("[system]\n" + "\n".join(sys_lines).rstrip("\n") + "\n")
 
+    if name == native_name and not buckets["cargo"]:
+        # v1's native system defined no cargo target, and its cargo recipes pass
+        # `--target $CARGO_BUILD_TARGET`: a native cargo build could not have worked.
+        # Cargo has its own triple spelling, so this is not $TARGET_TRIPLET.
+        buckets["cargo"].append('CARGO_BUILD_TARGET = "%s"' % RUST_TRIPLE.get(HOST_ARCH, ""))
+        REPORT.add(f"{name}/generic.lua", "added the cargo target v1 never defined",
+                   RUST_TRIPLE.get(HOST_ARCH, ""))
     for bs in ("autoconf", "cmake", "meson", "cargo"):
         if buckets[bs]:
             with open(os.path.join(out_dir, bs + ".toml"), "w") as f:
@@ -547,7 +590,12 @@ def port_system(src_dir, dst_root, native_name):
 
     for entry in sorted(os.listdir(src_dir)):
         if entry.endswith((".cmake", ".ini")):
-            shutil.copy2(os.path.join(src_dir, entry), os.path.join(out_dir, entry))
+            out_entry = entry
+            for old, new in RENAMES.items():
+                out_entry = out_entry.replace(old, new)
+            if out_entry != entry:
+                REPORT.add(f"{name}/{entry}", "renamed with the system", out_entry)
+            shutil.copy2(os.path.join(src_dir, entry), os.path.join(out_dir, out_entry))
             REPORT.add(f"{name}/{entry}", "copied unchanged", entry)
     REPORT.add(f"{name}/generic.lua", "ported to", "system@" + name)
 
@@ -567,7 +615,7 @@ def main():
             g = os.path.join(path, "generic.lua")
             if not os.path.isdir(path) or not os.path.isfile(g):
                 continue
-            if "system(" not in open(g).read():
+            if not is_system_file(open(g).read()):
                 continue
             port_system(path, args.dst, args.native)
     else:
@@ -576,7 +624,7 @@ def main():
             g = os.path.join(path, "generic.lua")
             if not os.path.isdir(path):
                 continue
-            if os.path.isfile(g) and "system(" in open(g).read():
+            if os.path.isfile(g) and is_system_file(open(g).read()):
                 continue  # a system, not a package
             if not os.path.isfile(g) and not os.path.isfile(os.path.join(path, "source.lua")):
                 continue
