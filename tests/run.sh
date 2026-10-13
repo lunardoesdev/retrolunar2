@@ -113,6 +113,21 @@ else
     (cd / && LD_LIBRARY_PATH="$WORK/bundle" "$WORK/bundle/pngprobe")
 fi
 
+# m4 is the tree's autotools package, and the tool every configure step would
+# use: build it, then prove the binary runs — not just that the step returned.
+"$RL" generate --packages "$PACKAGES" --nest "$NEST" -x "m4@$native" >"$WORK/m4.log" 2>&1 || {
+    echo "m4@$native: the build failed" >&2
+    tail -8 "$WORK/m4.log" >&2
+    exit 1
+}
+if "$NEST/m4@$native/bin/m4" --version >"$WORK/m4.version" 2>&1; then
+    echo "m4@$native: $("$NEST/m4@$native/bin/m4" --version | head -1)"
+else
+    echo "m4@$native: the binary does not run" >&2
+    cat "$WORK/m4.version" >&2
+    exit 1
+fi
+
 echo "=== the fifth build system, on a package that is only files to place ==="
 "$RL" generate --packages "$PACKAGES" --nest "$NEST" -x "meson@$native" >"$WORK/python.log" 2>&1 ||
     { echo "PYTHON DRIVER FAILED"; tail -8 "$WORK/python.log"; exit 1; }
