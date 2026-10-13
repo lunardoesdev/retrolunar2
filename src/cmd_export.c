@@ -317,8 +317,12 @@ static int bake_rpath(const char *path, int enabled) {
 /* --- the command -------------------------------------------------------- */
 
 int cmd_export(const options_t *o) {
-    if (o->args.n != 1) {
-        fputs("retrolunar: export wants exactly one <pack[@sys]> or a file path\n", stderr);
+    if (o->args.n < 1) {
+        fputs("retrolunar: export wants a <pack[@sys]> or a file path\n", stderr);
+        return 1;
+    }
+    if (o->args.n > 1 && (strchr(o->args.v[0], '/') != NULL || is_file(o->args.v[0]))) {
+        fputs("retrolunar: a file path is exported on its own\n", stderr);
         return 1;
     }
     if (o->to == NULL) {
@@ -366,24 +370,49 @@ int cmd_export(const options_t *o) {
             free(nest);
             return 1;
         }
-        if (resolve_targets(packages, &arg, 1, &g) != 0) {
+        if (resolve_targets(packages, (const char *const *)o->args.v, o->args.n, &g) != 0) {
             free(packages);
             index_free(&ix);
             free(nest);
             return 1;
         }
         have_graph = 1;
-        pkg_t *p = &g.nodes[g.n - 1].pkg;
-        /* The package's own directory in the nest, not its recipe directory:
-         * that is where the artifacts are. */
-        char *name_sys = xmalloc(strlen(p->name) + strlen(p->sys) + 2);
-        sprintf(name_sys, "%s@%s", p->name, p->sys);
-        char *pkgdir = path_join(nest, name_sys);
-        if (!is_dir(pkgdir))
-            fprintf(stderr, "retrolunar: %s is not built yet (%s)\n", arg, pkgdir);
-        add_artifacts(pkgdir, &b);
-        free(pkgdir);
-        free(name_sys);
+        /* The graph holds dependencies and targets alike, so ask which nodes
+         * were named. Keys are canonical, which is what makes `zlib` and
+         * `zlib@native` land on the same node. */
+        strlist_t wanted;
+        strlist_init(&wanted);
+        for (size_t i = 0; i < o->args.n; i++) {
+            char key[512];
+            if (target_key(o->args.v[i], RETROLUNAR_DEFAULT_SYSTEM, key, sizeof key) == 0)
+                strlist_add(&wanted, key);
+        }
+        int refused = 0;
+        for (size_t n = 0; n < g.n; n++) {
+            if (!strlist_has(&wanted, g.nodes[n].key))
+                continue;
+            const system_t *node_sys = graph_system(&g, g.nodes[n].pkg.sys);
+            const char *host_os = node_sys != NULL ? system_sym(node_sys, "HOST_OS") : NULL;
+            if (host_os != NULL && strcmp(host_os, "android") == 0) {
+                fprintf(stderr, "retrolunar: %s: an Android binary loads its libraries from the "
+                                "application's own directory, so a bundle cannot relocate it\n",
+                        g.nodes[n].key);
+                refused = 1;
+                continue;
+            }
+            /* The package's own directory in the nest, not its recipe directory:
+             * that is where the artifacts are. */
+            char *pkgdir = path_join(nest, g.nodes[n].key);
+            if (!is_dir(pkgdir))
+                fprintf(stderr, "retrolunar: %s is not built yet (%s)\n", g.nodes[n].key, pkgdir);
+            add_artifacts(pkgdir, &b);
+            free(pkgdir);
+        }
+        strlist_free(&wanted);
+        if (refused) {
+            free(packages);
+            goto fail;
+        }
         /* Name each artifact after where it will live, so the walk adds its
          * libraries next to it. */
         for (size_t i = 0; i < b.files.n; i++)
@@ -405,6 +434,7 @@ int cmd_export(const options_t *o) {
     int rc = 0;
     printf("retrolunar: exported %zu file(s) from %zu package file(s) to %s\n", copied.n,
            b.files.n, o->to);
+    size_t launcher_for = 0;
     if (b.platform.n > 0) {
         printf("retrolunar: provided by the platform or toolchain, not copied:");
         for (size_t i = 0; i < b.platform.n; i++)
@@ -416,10 +446,10 @@ int cmd_export(const options_t *o) {
         for (size_t i = 0; i < b.unresolved.n; i++)
             printf(" %s", b.unresolved.v[i]);
         printf("\n");
-        if (o->strict) {
-            fputs("retrolunar: --strict: refusing to call this bundle complete\n", stderr);
-            rc = 1;
-        }
+        /* A bundle that quietly misses a library is worse than no bundle: it
+         * fails on the machine it was carried to. */
+        fputs("retrolunar: refusing to call this bundle complete\n", stderr);
+        rc = 1;
     }
 
     if (o->rpath) {
@@ -436,6 +466,7 @@ int cmd_export(const options_t *o) {
             }
             free(dest);
         }
+        launcher_for = missed;
         if (missed > 0) {
             /* A flash drive has no LD_LIBRARY_PATH, so the bundle carries one:
              * a launcher that points the loader at its own directory. Written
@@ -461,6 +492,9 @@ int cmd_export(const options_t *o) {
             free(launcher);
         }
     }
+
+    printf("retrolunar: bundle: %zu file(s), %zu unresolved, %zu on the launcher\n",
+           copied.n, b.unresolved.n, launcher_for);
 
     strlist_free(&copied);
     if (have_graph)

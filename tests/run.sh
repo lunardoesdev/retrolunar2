@@ -127,13 +127,19 @@ echo "=== export, and the program it produces ==="
 libs=$(ls -d "$NEST"/*@"$native"/lib "$NEST"/*@"$native"/lib64 2>/dev/null | tr '\n' ':' || true)
 LD_LIBRARY_PATH=$libs "$NEST/pngprobe@$native/bin/pngprobe"
 rm -rf "$WORK/bundle"
-"$RL" export --packages "$PACKAGES" --nest "$NEST" --to "$WORK/bundle" "$CHAIN" >"$WORK/export.log" 2>&1 || true
-tail -3 "$WORK/export.log"
-if [ -x "$WORK/bundle/run.sh" ]; then
-    (cd / && "$WORK/bundle/run.sh" "$WORK/bundle/pngprobe")
-else
-    (cd / && LD_LIBRARY_PATH="$WORK/bundle" "$WORK/bundle/pngprobe")
-fi
+"$RL" export --packages "$PACKAGES" --nest "$NEST" --to "$WORK/bundle" "$CHAIN" >"$WORK/export.log" 2>&1 || {
+    echo "export refused the bundle:"; tail -5 "$WORK/export.log"; exit 1
+}
+tail -1 "$WORK/export.log"
+# Everything was built with $ORIGIN in its runtime path, so the bundle is a copy:
+# no launcher, and nothing it needs is missing.
+grep -q 'bundle: .*, 0 unresolved, 0 on the launcher' "$WORK/export.log" || {
+    echo "the bundle needs a launcher or misses a library:"; cat "$WORK/export.log"; exit 1
+}
+[ -e "$WORK/bundle/run.sh" ] && { echo "a launcher was written anyway" >&2; exit 1; }
+# A bundle carries the platform's libraries: it runs from anywhere, with nothing
+# set, which is the whole point of it.
+(cd / && "$WORK/bundle/pngprobe")
 
 # m4 is the tree's autotools package, and the tool every configure step would
 # use: build it, then prove the binary runs — not just that the step returned.
@@ -149,6 +155,17 @@ else
     cat "$WORK/m4.version" >&2
     exit 1
 fi
+
+rm -rf "$WORK/two"
+"$RL" export --packages "$PACKAGES" --nest "$NEST" --to "$WORK/two" "m4@$native" "pngprobe@$native" >"$WORK/two.log" 2>&1 || {
+    echo "export of two targets failed:"; tail -5 "$WORK/two.log"; exit 1
+}
+for f in m4 pngprobe; do
+    [ -x "$WORK/two/$f" ] || { echo "two-target bundle is missing $f:"; cat "$WORK/two.log"; exit 1; }
+done
+grep -q 'bundle: .*, 0 unresolved, 0 on the launcher' "$WORK/two.log" ||
+    { echo "two-target bundle is incomplete:"; cat "$WORK/two.log"; exit 1; }
+(cd / && "$WORK/two/m4" --version | head -1)
 
 echo "=== the fifth build system, on a package that is only files to place ==="
 "$RL" generate --packages "$PACKAGES" --nest "$NEST" -x "meson@$native" >"$WORK/python.log" 2>&1 ||

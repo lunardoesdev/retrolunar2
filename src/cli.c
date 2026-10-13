@@ -93,7 +93,7 @@ int cli_parse(int argc, char **argv, options_t *o) {
             o->execute = 1;
             continue;
         }
-        if (strcmp(a, "--strict") == 0) {
+        if (strcmp(a, "--strict") == 0) { /* the only behaviour there is */
             o->strict = 1;
             continue;
         }
