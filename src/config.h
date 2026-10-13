@@ -17,6 +17,8 @@
  * build says it does not want the built-in repository at all. */
 #define RETROLUNAR_DEFAULT_REPO_REV NULL
 
-#define RETROLUNAR_VERSION "2.0.0"
+#define RETROLUNAR_VERSION "2.9.0"   /* the tool reads it into every fingerprint, so a
+                                     * new tool means new entries: a package built by
+                                     * 2.0 is not the one 2.9 would build. */
 
 #endif /* RETROLUNAR_CONFIG_H */
