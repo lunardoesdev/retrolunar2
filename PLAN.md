@@ -9,15 +9,31 @@ recipes come over from `../retrolunar-packages`.
 
 ## Status
 
-P0–P4 are implemented and verified on the host rig: the resolver and `deps`, the closure
-compiler and emitter (`install`, `generate -x`), fingerprints with probes and the skip path,
-and `env` and `export`. The test tree lives in `../retrolunar2-packages` and builds `m4`,
-`zlib`, `libpng`, `fribidi` and a `pngprobe` that links them.
+P0–P5 are done. The tool, the port and the acceptance run all hold on the host rig; Android is
+the one thing not built (deliberately last, and not verifiable on this machine).
 
-What is left: porting systems and packages from `retrolunar-packages`, and Android. The
-acceptance run of P4 (clean build, rerun skips, editing a file inside a system directory
-makes every package of that system stale, `export` producing a bundle that runs on its own)
-passes; the commit history records it.
+The port (`tools/lua2toml.py`, `../retrolunar2-packages`) converted 59 systems and 236 packages
+to TOML, and `PORTING.md` records every line it dropped, rewrote or fixed by hand — the
+`$PREFIX` of v1 was a single shared directory, and each of its uses had to name something
+specific instead. All 781 emitted files parse with both this tool's reader and `tomllib`.
+
+Acceptance, run end to end after the last change:
+
+- 711 combinations of package × system resolve with no errors.
+- A clean native build of `pngprobe@clang-native` (zlib → libpng → freetype → pngprobe, the last
+  through cargo) takes 87 s; the run right after it skips 7 of 7 nodes as fresh.
+- A new file inside `system@clang-native/` — not a TOML file, any file — makes the four build
+  nodes of that system stale and leaves the three source nodes alone; taking it away brings the
+  tree back to 7 of 7 fresh. An unused file inside a package directory rebuilds nothing;
+  changing the build file that wins rebuilds it and everything downstream.
+- `export` collects the runtime closure by soname (`libpng16.so.16`, `libz.so.1`), leaves the
+  host's own libraries out, and rewrites an existing runtime path to `$ORIGIN` when the string
+  fits. Files with no runtime path at all — cargo binaries among them — are left untouched and
+  the bundle carries `run.sh`, which is what makes it work on a flash drive.
+
+What is left: Android (one system, one package chain), and giving any ELF a runtime path by
+adding a segment (`export` cannot do it today without risking the file, see the notes in
+`src/bin.c`).
 
 ## Shape of the thing
 
