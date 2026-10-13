@@ -176,8 +176,8 @@ static void emit_body(pkg_t *p, FILE *out) {
 }
 
 /* A recipe that names a build system is driven by that system's `script`, which
- * lives in the system's namespace as `buildsystem.<name>.script` — from the
- * system's own files, or from <packages>/buildsystems/<name>.toml. The recipe's
+ * lives in the system's namespace as `buildsystem.<name>.script`, in the system's
+ * own files. The recipe's
  * fields become $BS_* variables, so the script knows what to build without this
  * program knowing what cmake, meson, make or cargo are. */
 /* The source trees a node builds from: every @source dependency, copied into
