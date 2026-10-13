@@ -423,7 +423,7 @@ int cmd_export(const options_t *o) {
     }
 
     if (o->rpath) {
-        size_t done = 0, missed = 0;
+        size_t missed = 0;
         for (size_t i = 0; i < copied.n; i++) {
             char *dest = target_path(o->to, copied.v[i]);
             bin_t probe;
@@ -431,16 +431,35 @@ int cmd_export(const options_t *o) {
             if (is_elf)
                 bin_close(&probe);
             if (is_elf) {
-                if (bake_rpath(dest, 1) == 0)
+                if (bake_rpath(dest, 1) == 0) /* 1 when it took an $ORIGIN path */
                     missed++;
-                else
-                    done++;
             }
             free(dest);
         }
-        if (missed > 0 && done == 0)
-            printf("retrolunar: no ELF file could take an $ORIGIN rpath: run with "
-                   "LD_LIBRARY_PATH=%s\n", o->to);
+        if (missed > 0) {
+            /* A flash drive has no LD_LIBRARY_PATH, so the bundle carries one:
+             * a launcher that points the loader at its own directory. Written
+             * only when something needs it, because when every file took an
+             * $ORIGIN path there is nothing to launch through. */
+            char *launcher = path_join(o->to, "run.sh");
+            FILE *lf = fopen(launcher, "w");
+            if (lf != NULL) {
+                fputs("#!/bin/sh\n"
+                      "# Everything this bundle loads is next to this script. Export could\n"
+                      "# not bake an $ORIGIN runtime path into every file, so the loader is\n"
+                      "# told where to look instead. Usage: ./run.sh <program> [args...]\n"
+                      "_dir=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
+                      "LD_LIBRARY_PATH=\"${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$_dir\"\n"
+                      "export LD_LIBRARY_PATH\n"
+                      "exec \"$@\"\n", lf);
+                fclose(lf);
+                chmod(launcher, 0755);
+                printf("retrolunar: wrote %s (no runtime path could be baked into %zu file(s))\n",
+                       launcher, missed);
+            }
+            printf("retrolunar: run from %s as: ./run.sh <program>\n", o->to);
+            free(launcher);
+        }
     }
 
     strlist_free(&copied);
