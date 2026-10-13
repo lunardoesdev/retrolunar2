@@ -358,8 +358,14 @@ char *system_expand(const system_t *s, const char *text, const char *where) {
  * backticks need escaping here. */
 static void emit_quoted(FILE *out, const char *value) {
     fputc('"', out);
+    /* Escape what the shell would read differently inside double quotes. A
+     * backslash before anything else is left alone, because that is how a value
+     * says "this dollar is literal": `\$ORIGIN` has to reach the linker as
+     * `$ORIGIN`, and escaping the backslash would let the shell eat it. */
     for (const char *p = value; *p != '\0'; p++) {
-        if (*p == '"' || *p == '\\' || *p == '`')
+        if (*p == '"' || *p == '`')
+            fputc('\\', out);
+        else if (*p == '\\' && (p[1] == '\0' || p[1] == '"' || p[1] == '`' || p[1] == '\\'))
             fputc('\\', out);
         fputc(*p, out);
     }

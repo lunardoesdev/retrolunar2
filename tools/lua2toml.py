@@ -1028,7 +1028,9 @@ def add_origin_rpath(lines, name):
             continue
         if "rpath" in m.group(2):
             return lines
-        lines[i] = "%s%s -Wl,-rpath,$ORIGIN%s" % (m.group(1), m.group(2), m.group(3))
+        # Two backslashes in the file: TOML gives one, and that one is what
+        # stops the shell from expanding the dollar before the linker sees it.
+        lines[i] = "%s%s -Wl,-rpath,\\\\$ORIGIN%s" % (m.group(1), m.group(2), m.group(3))
         REPORT.add(f"{name}/system.toml", "built with $ORIGIN in its runtime path",
                    "so an exported bundle of it is a copy, not a patch")
         return lines
