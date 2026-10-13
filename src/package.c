@@ -1,4 +1,5 @@
 #include "package.h"
+#include "tree.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -8,7 +9,11 @@
  * and any other scalar is emitted as a shell variable too. */
 char *package_build_file(const char *packages, const char *name, const char *sys,
                          const system_t *system) {
-    char *dir = path_join(packages, name);
+    /* Several repositories are searched in order: the first that has the
+     * package is the one its recipe comes from. */
+    char *dir = tree_root_with(packages, name);
+    if (dir == NULL)
+        return NULL;
     char *cand = NULL;
     if (sys != NULL && strcmp(sys, "source") != 0) {
         char fname[512];
@@ -43,8 +48,12 @@ char *package_build_file(const char *packages, const char *name, const char *sys
 /* The tables a project manifest adds to the recipe format. They are read by
  * manifest.c; the recipe reader only has to let them through, and it grows this
  * list in the same commit that teaches the manifest to use a table. */
+/* Tables a project manifest carries besides the recipe keys. The manifest is a
+ * recipe, so anything else it says belongs to the project rather than to the
+ * build: where its packages come from, and (once there is a cache) where built
+ * ones are kept. */
 static int manifest_table(const char *key) {
-    return strcmp(key, "shell") == 0;
+    return strcmp(key, "shell") == 0 || strcmp(key, "repo") == 0;
 }
 
 static int load_doc(const char *file, pkg_t *out) {
@@ -168,10 +177,11 @@ int package_load(const char *packages, const char *name, const char *sys,
     pairlist_init(&out->vars);
     out->name = xstrdup(name);
     out->sys = xstrdup(sys != NULL ? sys : "");
-    out->dir = path_join(packages, name);
+    out->dir = tree_root_with(packages, name);
 
-    if (!is_dir(out->dir)) {
-        fprintf(stderr, "retrolunar: no package '%s'\n", name);
+    if (out->dir == NULL) {
+        fprintf(stderr, "retrolunar: no package '%s' in %s\n", name,
+                packages != NULL ? packages : "(no tree)");
         package_free(out);
         return -1;
     }

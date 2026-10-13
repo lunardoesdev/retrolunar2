@@ -178,5 +178,77 @@ fi
 
 sh "$here/hashes.sh" "$PACKAGES" "$NEST" "$CHAIN"
 
+echo "=== a project: its own manifest, its own repositories, its own build ==="
+# A manifest is a recipe for the package this directory is, and the project
+# resolves against the repositories it names — checked here with the built-in
+# repository switched off, so nothing reaches the network.
+PROJ="$WORK/proj"
+rm -rf "$PROJ"
+mkdir -p "$PROJ"
+cat >"$PROJ/retrolunar.toml" <<EOF
+deps = ["zlib@$native"]
+
+build = """
+mkdir -p \"\$PREFIX/bin\"
+printf '#!/bin/sh\\necho proj from \$PREFIX\\n' > \"\$PREFIX/bin/proj\"
+chmod +x \"\$PREFIX/bin/proj\"
+"""
+
+[repo.packages]
+url = "$PACKAGES"
+EOF
+PNEST="$WORK/proj-nest"
+rm -rf "$PNEST"
+( cd "$PROJ" && "$RL" --nest "$PNEST" --no-default-repo run sh -- -c 'echo "zlib at $zlib_PREFIX"' ) \
+    >"$WORK/proj-run.log" 2>&1 ||
+    { echo "the project's environment failed:"; tail -8 "$WORK/proj-run.log"; exit 1; }
+grep -q "zlib at $PNEST/zlib@$native" "$WORK/proj-run.log" ||
+    { echo "the environment does not name the nest:"; cat "$WORK/proj-run.log"; exit 1; }
+echo "the manifest's dependencies resolved from the repository it names"
+
+# `build --out DIR` installs this package there, dependencies staying in the nest.
+rm -rf "$PROJ/build"
+( cd "$PROJ" && "$RL" --nest "$PNEST" --no-default-repo build --out "$PROJ/build" ) \
+    >"$WORK/proj-build.log" 2>&1 ||
+    { echo "build --out failed:"; tail -8 "$WORK/proj-build.log"; exit 1; }
+[ -x "$PROJ/build/bin/proj" ] ||
+    { echo "build --out did not install the package:"; cat "$WORK/proj-build.log"; exit 1; }
+case "$("$PROJ/build/bin/proj")" in
+"proj from $PROJ/build") ;;
+*) echo "the program built into --out does not name it:"; "$PROJ/build/bin/proj"; exit 1 ;;
+esac
+[ ! -e "$PROJ/build/zlib@$native" ] || { echo "--out holds a dependency:"; exit 1; }
+echo "build --out: this package in DIR, its dependencies in the nest"
+
+# The lock says what the build used, and entries are addressed by content.
+grep -q '^\[entries\]' "$PROJ/retrolunar.lock" ||
+    { echo "no lock was written:"; cat "$PROJ/retrolunar.lock" 2>/dev/null; exit 1; }
+entries=$(grep -c '^"' "$PROJ/retrolunar.lock")
+[ -d "$PNEST/store" ] || { echo "built packages are not in a store:"; exit 1; }
+[ -L "$PNEST/zlib@$native" ] ||
+    { echo "a name is not a link into the store: $(ls -ld "$PNEST/zlib@$native")"; exit 1; }
+echo "the lock names $entries entries, and zlib@$native is a link into the store"
+
+# Two versions of one package keep their own entry: the second build adds one
+# instead of overwriting what the first left.
+before=$(ls "$PNEST/store" | wc -l)
+sed -i 's/echo proj from/echo proj again from/' "$PROJ/retrolunar.toml"
+( cd "$PROJ" && "$RL" --nest "$PNEST" --no-default-repo build ) >"$WORK/proj-again.log" 2>&1 ||
+    { echo "the second build failed:"; tail -8 "$WORK/proj-again.log"; exit 1; }
+after=$(ls "$PNEST/store" | wc -l)
+[ "$after" -gt "$before" ] ||
+    { echo "a changed recipe overwrote its entry ($before -> $after)"; exit 1; }
+case "$("$PNEST/proj@$native/bin/proj")" in
+*"proj again from"*) ;;
+*) echo "the name does not point at the new build:"; "$PNEST/proj@$native/bin/proj"; exit 1 ;;
+esac
+echo "a changed recipe is a second entry, and the name points at it"
+
+# gc removes what nothing points at, and only that.
+"$RL" --nest "$PNEST" gc >"$WORK/proj-gc.log" 2>&1 || { echo "gc failed:"; cat "$WORK/proj-gc.log"; exit 1; }
+[ -x "$PNEST/proj@$native/bin/proj" ] || { echo "gc removed a package in use"; exit 1; }
+grep -q 'in use' "$WORK/proj-gc.log" || { echo "gc said nothing useful:"; cat "$WORK/proj-gc.log"; exit 1; }
+echo "gc: $(tail -1 "$WORK/proj-gc.log" | sed 's/^retrolunar: //')"
+
 echo
 echo "acceptance: ok (work in $WORK)"

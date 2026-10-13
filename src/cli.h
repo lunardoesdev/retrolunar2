@@ -27,6 +27,8 @@ typedef struct {
     const char *nest;     /* --nest DIR */
     const char *output;   /* -o FILE, --output FILE */
     const char *to;       /* --to DIR, export only */
+    strlist_t repos;      /* --repo NAME=URL[@REV], repeatable */
+    int no_default_repo;  /* --no-default-repo */
     int cores;            /* --cores N, defaults to 1 */
     int execute;          /* -x */
     int strict;           /* --strict, export only */

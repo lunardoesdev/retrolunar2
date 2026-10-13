@@ -76,6 +76,18 @@ int cli_parse(int argc, char **argv, options_t *o) {
                 return -1;
             continue;
         }
+        if (strcmp(a, "--repo") == 0) {
+            if (++i >= argc) {
+                fputs("retrolunar: --repo wants NAME=URL[@REV]\n", stderr);
+                return -1;
+            }
+            strlist_add(&o->repos, argv[i]);
+            continue;
+        }
+        if (strcmp(a, "--no-default-repo") == 0) {
+            o->no_default_repo = 1;
+            continue;
+        }
         if (strcmp(a, "--out") == 0 || strcmp(a, "--to") == 0) {
             o->to = value_of(argc, argv, &i, a);
             if (o->to == NULL)
@@ -133,7 +145,8 @@ int cli_parse(int argc, char **argv, options_t *o) {
     return 0;
 }
 
-void cli_free(options_t *o) { strlist_free(&o->args); }
+void cli_free(options_t *o) {
+    strlist_free(&o->repos); strlist_free(&o->args); }
 
 void cli_usage(FILE *out, const char *prog) {
     fprintf(out,
@@ -170,6 +183,10 @@ void cli_usage(FILE *out, const char *prog) {
             "  -o, --output F   write the script to F (generate)\n"
             "  -x, --execute    run the generated script (generate)\n"
             "  --out DIR        where build installs the package (also --to)\n"
+            "  --repo NAME=URL[@REV]  a repository to resolve against; repeatable, and\n"
+            "            the last @ separates a revision. Repositories are searched in\n"
+            "            the order they are declared, the built-in `default` last.\n"
+            "  --no-default-repo     do not search the built-in repository\n"
             "  --strict         export: treat an unresolved library as an error\n"
             "  --no-rpath       export: do not bake an $ORIGIN rpath into ELF files\n"
             "  -h, --help       show this help and exit\n"

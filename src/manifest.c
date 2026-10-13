@@ -1,4 +1,5 @@
 /* Reading a project manifest. See manifest.h for what the file is. */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -54,6 +55,42 @@ int manifest_find(const char *dir, manifest_t *out) {
             return -1;
         }
     }
+    toml_datum_t repos = toml_opt_table(root, "repo");
+    if (repos.type != TOML_UNKNOWN) {
+        toml_iter_t it;
+        toml_iter_init(&it, repos);
+        const char *key = NULL;
+        toml_datum_t val;
+        while (toml_iter_next(&it, &key, &val)) {
+            if (val.type != TOML_TABLE) {
+                toml_err(val, "repo.%s: wants a table (url, and rev if it should be pinned)", key);
+                toml_doc_free(&doc);
+                return -1;
+            }
+            const char *url = toml_opt_str(val, "url");
+            if (url == NULL) {
+                toml_err(val, "repo.%s: needs a url", key);
+                toml_doc_free(&doc);
+                return -1;
+            }
+            static const char *const known[] = {"url", "rev", NULL};
+            char ctx[256];
+            snprintf(ctx, sizeof ctx, "repo.%s", key);
+            if (toml_check_keys(val, known, ctx) != 0) {
+                toml_doc_free(&doc);
+                return -1;
+            }
+            if (out->repos.n == out->repos.cap) {
+                out->repos.cap = out->repos.cap != 0 ? out->repos.cap * 2 : 4;
+                out->repos.v = xrealloc(out->repos.v, out->repos.cap * sizeof *out->repos.v);
+            }
+            repo_entry_t *e = &out->repos.v[out->repos.n++];
+            e->name = xstrdup(key);
+            e->url = xstrdup(url);
+            const char *rev = toml_opt_str(val, "rev");
+            e->rev = rev != NULL ? xstrdup(rev) : NULL;
+        }
+    }
     toml_doc_free(&doc);
 
     out->dir = where;
@@ -63,6 +100,12 @@ int manifest_find(const char *dir, manifest_t *out) {
 }
 
 void manifest_free(manifest_t *m) {
+    for (size_t i = 0; i < m->repos.n; i++) {
+        free(m->repos.v[i].name);
+        free(m->repos.v[i].url);
+        free(m->repos.v[i].rev);
+    }
+    free(m->repos.v);
     free(m->dir);
     free(m->file);
     free(m->name);

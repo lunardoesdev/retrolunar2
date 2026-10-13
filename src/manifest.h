@@ -18,11 +18,26 @@
 
 #include "util.h"
 
+/* A repository the project resolves against. `rev` is a revision to check out
+ * (a tag, a commit): with it, the same manifest builds the same tree. */
+typedef struct {
+    char *name;
+    char *url;
+    char *rev;
+} repo_entry_t;
+
+typedef struct {
+    repo_entry_t *v;
+    size_t n;
+    size_t cap;
+} repolist_t;
+
 typedef struct {
     char *dir;        /* the directory holding retrolunar.toml */
     char *file;       /* .../retrolunar.toml */
     char *name;       /* the package's name: the directory's */
     strlist_t shell_deps; /* [shell] deps, empty when there is no such table */
+    repolist_t repos;     /* [repo.*], in the order the file declares them */
 } manifest_t;
 
 /* Look for a manifest in `dir` (NULL means the working directory).

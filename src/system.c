@@ -1,4 +1,5 @@
 #include "system.h"
+#include "tree.h"
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -225,12 +226,27 @@ static int cmp_files(const void *a, const void *b) {
     return strcmp(x, y);
 }
 
+static int system_load_from(const char *root, const char *name, system_t *out);
+
 int system_load(const char *packages, const char *name, system_t *out) {
+    /* A system comes from the first repository that defines one, like a
+     * package: the repositories are one tree, in order. */
+    char *dir_name = str_concat("system@", name);
+    char *root = tree_root_with_entry(packages, dir_name, "system.toml");
+    free(dir_name);
+    if (root == NULL)
+        return -1;
+    int rc = system_load_from(root, name, out);
+    free(root);
+    return rc;
+}
+
+static int system_load_from(const char *root, const char *name, system_t *out) {
     memset(out, 0, sizeof *out);
     strlist_init(&out->fallbacks);
     strlist_init(&out->probes);
     char *dir_name = str_concat(SYSTEM_PREFIX, name);
-    out->dir = path_join(packages, dir_name);
+    out->dir = path_join(root, dir_name);
     free(dir_name);
     if (!is_dir(out->dir)) {
         fprintf(stderr, "retrolunar: no system '%s' (no directory %s)\n", name, out->dir);

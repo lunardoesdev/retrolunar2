@@ -33,6 +33,17 @@ void tree_list_free(tree_list_t *l);
  * query matches everything), in name order. Reads the tree only. */
 void tree_search(const char *packages, const char *query, tree_list_t *out);
 
+/* $HOME/.cache/retrolunar/<leaf>, created if it is not there. */
+char *default_under_home(const char *leaf);
+
+/* Several repositories are searched as one tree, in order: `roots` may be a
+ * colon-separated list, and the first root holding the name wins. Returns a
+ * malloc'd path, or NULL when no root has it. */
+char *tree_root_with(const char *roots, const char *name);
+
+/* The same, for a directory that has to be a package or a system. */
+char *tree_root_with_entry(const char *roots, const char *name, const char *entry);
+
 /* True when the directory holds a package or a system we recognise: a
  * generic.toml, a source.toml or a system.toml. */
 int tree_is_entry(const char *dir);
