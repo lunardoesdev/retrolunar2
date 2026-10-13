@@ -52,16 +52,6 @@ static unsigned long long rd64(const unsigned char *p) {
     return rd32(p) | (rd32(p + 4) << 32);
 }
 
-static void wr32(unsigned char *p, unsigned long long v) {
-    for (int i = 0; i < 4; i++)
-        p[i] = (unsigned char)(v >> (8 * i));
-}
-
-static void wr64(unsigned char *p, unsigned long long v) {
-    for (int i = 0; i < 8; i++)
-        p[i] = (unsigned char)(v >> (8 * i));
-}
-
 /* --- ELF ---------------------------------------------------------------- */
 
 #define ELF_PT_LOAD 1
@@ -72,6 +62,8 @@ static void wr64(unsigned char *p, unsigned long long v) {
 #define ELF_DT_STRSZ 10
 #define ELF_DT_RPATH 15
 #define ELF_DT_RUNPATH 29
+#define ELF_SHT_STRTAB 3
+#define ELF_SHT_DYNAMIC 6
 
 typedef struct {
     unsigned long long vaddr;
@@ -80,6 +72,7 @@ typedef struct {
 
 typedef struct {
     size_t off, vaddr, filesz, memsz;
+    int ph_index; /* which program header describes it, for writing back */
 } load_t;
 
 /* The ELF layout, as far as this tool cares about it. */
@@ -120,6 +113,7 @@ static void elf_parse(const bin_t *b, elf_t *e) {
             l.filesz = (size_t)rd32(p + 16);
             l.memsz = (size_t)rd32(p + 20);
         }
+        l.ph_index = i;
         if (e->nloads < (int)(sizeof e->loads / sizeof e->loads[0]))
             e->loads[e->nloads++] = l;
     }
@@ -193,7 +187,7 @@ static int elf_dynamic(const bin_t *b, unsigned long long *strtab,
     if (e.sh != NULL) {
         for (int i = 0; i < e.shnum; i++) {
             const unsigned char *sh = e.sh + (size_t)i * e.shentsize;
-            if ((unsigned int)rd32(sh + 4) != 6) /* SHT_DYNAMIC */
+            if ((unsigned int)rd32(sh + 4) != ELF_SHT_DYNAMIC)
                 continue;
             size_t size = e.is64 ? (size_t)rd64(sh + 32) : (size_t)rd32(sh + 20);
             size_t n = size / dent;
@@ -337,12 +331,19 @@ int bin_rpath(const bin_t *b, char *value, size_t valuesz, size_t *str_off, size
         return 1; /* no entry to rewrite */
     elf_t e;
     elf_parse(b, &e);
+    /* DT_RPATH and DT_RUNPATH hold an offset into DT_STRTAB, exactly like a
+     * DT_NEEDED name. Reading the value as an address lands in the middle of
+     * unrelated bytes; the length taken from there then lets a rewrite scribble
+     * over whatever follows the real string. */
     size_t off = 0;
-    if (vaddr_to_off(&e, rpath_addr, &off) != 0)
+    if (vaddr_to_off(&e, strtab + rpath_addr, &off) != 0)
         return -1;
     size_t n = 0;
     while (off + n < b->len && b->data[off + n] != '\0' && n + 1 < valuesz) {
-        value[n] = (char)b->data[off + n];
+        unsigned char c = b->data[off + n];
+        if (c < 0x20 || c > 0x7e)
+            return -1; /* not a path: refuse to touch it */
+        value[n] = (char)c;
         n++;
     }
     value[n] = '\0';
@@ -374,174 +375,30 @@ int bin_patch_rpath(const char *path, bin_t *b, size_t str_off, size_t str_len,
 
 #define MAX_SEC 128
 
-/* Find room for a string inside a loaded segment.
- *
- * Only padding counts: the gaps between the sections the segment holds, and the
- * tail after the last one, all inside the bytes the segment actually reads from
- * the file. Writing into a section would be writing into somebody's data, and
- * the loader reads exactly p_filesz bytes, so a hole in there is the one place
- * this is safe. The bytes must be zero already, which is what makes it padding
- * rather than something in use. */
-static int find_room(const bin_t *b, const elf_t *e, const load_t *l, size_t want_len,
-                     size_t *file_off, unsigned long long *vaddr) {
-    size_t beg[MAX_SEC], end[MAX_SEC];
-    int n = 0;
-    /* The ELF header, the program header table and the section header table are
-     * not sections, so they would otherwise look like the roomiest padding in
-     * the file. Overwriting the first of them is how a working binary becomes a
-     * segfault. */
-    size_t fixed[3][2];
-    fixed[0][0] = 0;
-    fixed[0][1] = e->is64 ? 64 : 52;
-    fixed[1][0] = (size_t)(e->ph - b->data);
-    fixed[1][1] = fixed[1][0] + (size_t)e->phnum * (size_t)e->phentsize;
-    int nfixed = 2;
-    if (e->sh != NULL) {
-        fixed[2][0] = (size_t)(e->sh - b->data);
-        fixed[2][1] = fixed[2][0] + (size_t)e->shnum * (size_t)e->shentsize;
-        nfixed = 3;
-    }
-    for (int i = 0; i < nfixed && n < MAX_SEC; i++) {
-        if (fixed[i][0] < l->off || fixed[i][0] > l->off + l->filesz)
-            continue;
-        beg[n] = fixed[i][0];
-        end[n] = fixed[i][1] > l->off + l->filesz ? l->off + l->filesz : fixed[i][1];
-        n++;
-    }
-    if (e->sh != NULL) {
-        for (int i = 0; i < e->shnum && n < MAX_SEC; i++) {
-            const unsigned char *sh = e->sh + (size_t)i * e->shentsize;
-            unsigned int type = (unsigned int)rd32(sh + 4);
-            if (type == 0 || type == 8) /* SHT_NULL, SHT_NOBITS */
-                continue;
-            size_t off = e->is64 ? (size_t)rd64(sh + 24) : (size_t)rd32(sh + 16);
-            size_t size = e->is64 ? (size_t)rd64(sh + 32) : (size_t)rd32(sh + 20);
-            if (size == 0 || off < l->off || off + size > l->off + l->filesz)
-                continue;
-            beg[n] = off;
-            end[n] = off + size;
-            n++;
-        }
-    }
-    for (int i = 1; i < n; i++) { /* insertion sort: section counts are small */
-        size_t kb = beg[i], ke = end[i];
-        int j = i - 1;
-        while (j >= 0 && beg[j] > kb) {
-            beg[j + 1] = beg[j];
-            end[j + 1] = end[j];
-            j--;
-        }
-        beg[j + 1] = kb;
-        end[j + 1] = ke;
-    }
-
-    size_t seg_end = l->off + l->filesz;
-    for (int i = 0; i <= n; i++) {
-        size_t from = i == 0 ? l->off : end[i - 1];
-        size_t to = i == n ? seg_end : beg[i];
-        if (to <= from || to - from < want_len)
-            continue;
-        for (size_t o = from; o + want_len <= to; o++) {
-            int zero = 1;
-            for (size_t k = 0; k < want_len; k++) {
-                if (b->data[o + k] != 0) {
-                    zero = 0;
-                    break;
-                }
-            }
-            if (!zero)
-                continue;
-            *file_off = o;
-            *vaddr = (unsigned long long)(l->vaddr + (o - l->off));
-            return 0;
-        }
-    }
-    return -1;
-}
-
 /* Give an ELF file an $ORIGIN runtime path, so a bundle of files finds its own
  * libraries wherever it is copied. Nothing is rebuilt and nothing grows: a free
  * dynamic slot and the padding after a loaded segment are used, and the file is
  * left byte-for-byte identical when either is missing. */
+
+
 int bin_add_origin_rpath(const char *path, bin_t *b, char *note, size_t notesz) {
+    (void)path;
     if (b->kind != BIN_ELF) {
         snprintf(note, notesz, "not an ELF file");
         return 1;
     }
-    elf_t e;
-    elf_parse(b, &e);
-    unsigned long long strtab = 0, rpath_addr = 0;
-    strlist_t ignored;
-    strlist_init(&ignored);
-    size_t doff = 0, null_index = 0, capacity = 0;
-    elf_dynamic(b, &strtab, &rpath_addr, &ignored, &doff, &null_index, &capacity);
-    strlist_free(&ignored);
-    if (rpath_addr != 0) {
-        snprintf(note, notesz, "already has a runtime path");
-        return 1;
-    }
-    size_t dent = e.is64 ? 16 : 8;
-    if (capacity < null_index + 2) {
-        /* A new entry would have to shift the table and every address in it.
-         * Report rather than gamble with a binary. */
-        snprintf(note, notesz, "dynamic table is full (%zu of %zu slots)", null_index + 1,
-                 capacity);
-        return 1;
-    }
-
-    const char *want = "$ORIGIN";
-    size_t want_len = strlen(want) + 1;
-    size_t str_file_off = 0;
-    unsigned long long str_vaddr = 0;
-    int placed = 0;
-    for (int i = 0; i < e.nloads && !placed; i++) {
-        if (find_room(b, &e, &e.loads[i], want_len, &str_file_off, &str_vaddr) == 0)
-            placed = 1;
-    }
-    if (!placed) {
-        snprintf(note, notesz, "no room for the string in a loaded segment");
-        return 1;
-    }
-
-    /* The value follows what the system linker writes for this tag: an offset
-     * into the string table, so the loader finds the text at DT_STRTAB + value.
-     * Writing a virtual address here is what puts a working binary into
-     * decompose_rpath() with a pointer into nowhere. */
-    unsigned long long rel = (unsigned long long)((long long)str_vaddr - (long long)strtab);
-    memcpy(b->data + str_file_off, want, want_len);
-    unsigned char *slot = b->data + doff + null_index * dent;
-    if (e.is64) {
-        wr64(slot, ELF_DT_RUNPATH);
-        wr64(slot + 8, rel);
-        wr64(slot + dent, ELF_DT_NULL);
-        wr64(slot + dent + 8, 0);
-    } else {
-        wr32(slot, ELF_DT_RUNPATH);
-        wr32(slot + 4, rel);
-        wr32(slot + dent, ELF_DT_NULL);
-        wr32(slot + dent + 4, 0);
-    }
-
-    FILE *f = fopen(path, "r+b");
-    if (f == NULL) {
-        snprintf(note, notesz, "cannot reopen for writing");
-        return -1;
-    }
-    int rc = 0;
-    if (fseek(f, (long)str_file_off, SEEK_SET) != 0 ||
-        fwrite(b->data + str_file_off, 1, want_len, f) != want_len)
-        rc = -1;
-    if (rc == 0 && fseek(f, (long)(doff + null_index * dent), SEEK_SET) != 0)
-        rc = -1;
-    if (rc == 0 && fwrite(slot, 1, 2 * dent, f) != 2 * dent)
-        rc = -1;
-    fclose(f);
-    if (rc != 0) {
-        snprintf(note, notesz, "write failed");
-        return -1;
-    }
-    snprintf(note, notesz, "$ORIGIN added to the runtime path");
-    return 0;
+    /* The only edit that cannot damage a binary is writing over a string that is
+     * already there and is long enough. Giving a file a runtime path it does not
+     * have means moving bytes: a fresh program header and a segment for them, or
+     * a copied dynamic table. Two attempts at the cheap half of that both
+     * corrupted the program — a table slot whose room ran past the .dynamic
+     * section and into the section after it, and a grown segment whose .bss was
+     * then filled with file bytes, which hangs a Rust binary on the way out.
+     * Until that is done properly, a file with no runtime path says so, and the
+     * export leaves a launcher that sets LD_LIBRARY_PATH. */
+    snprintf(note, notesz, "no runtime path to rewrite; the bundle needs the launcher "
+                           "script that was written beside it");
+    return 1;
 }
 
 /* Case-insensitive: the PE import table spells Windows libraries in capitals
