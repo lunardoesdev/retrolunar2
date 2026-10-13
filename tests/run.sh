@@ -43,7 +43,8 @@ if [ -d "$SOURCES" ]; then
         rm -rf "$PACKAGES/$n"
         cp -r "$d" "$PACKAGES/$n"
     done
-    cp "$WORK/pkg/PORTING.md" "$WORK/sys/PORTING.md" "$PACKAGES/" 2>/dev/null || true
+    cp "$WORK/pkg/PORTING.md" "$PACKAGES/PORTING.md" 2>/dev/null || true
+    cp "$WORK/sys/PORTING.md" "$PACKAGES/PORTING-systems.md" 2>/dev/null || true
     echo "installed $(ls -d "$PACKAGES"/system@* | wc -l) systems and $(ls "$PACKAGES" | grep -vc 'system@\|PORTING\|README\|^\.') packages"
 fi
 
@@ -110,6 +111,17 @@ if [ -x "$WORK/bundle/run.sh" ]; then
     (cd / && "$WORK/bundle/run.sh" "$WORK/bundle/pngprobe")
 else
     (cd / && LD_LIBRARY_PATH="$WORK/bundle" "$WORK/bundle/pngprobe")
+fi
+
+echo "=== the fifth build system, on a package that is only files to place ==="
+"$RL" generate --packages "$PACKAGES" --nest "$NEST" -x "meson@$native" >"$WORK/python.log" 2>&1 ||
+    { echo "PYTHON DRIVER FAILED"; tail -8 "$WORK/python.log"; exit 1; }
+site=$("$RL" env --packages "$PACKAGES" --nest "$NEST" "meson@$native" | sed -n 's/^PYTHON_SITE=\"\(.*\)\"/\1/p' | head -1)
+site=${site:-lib/python3.14/site-packages}
+if [ -d "$NEST/meson@$native/$site/mesonbuild" ] && [ -x "$NEST/meson@$native/bin/meson" ]; then
+    echo "meson@$native: module in $site, launcher in bin/"
+else
+    echo "meson@$native: expected $site/mesonbuild and bin/meson" >&2; exit 1
 fi
 
 sh "$here/hashes.sh" "$PACKAGES" "$NEST" "$CHAIN"
