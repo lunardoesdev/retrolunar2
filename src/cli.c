@@ -11,6 +11,7 @@ static const struct {
 } COMMANDS[] = {
     {"install", CMD_INSTALL}, {"generate", CMD_GENERATE}, {"deps", CMD_DEPS},
     {"search", CMD_SEARCH},   {"env", CMD_ENV},           {"export", CMD_EXPORT},
+    {"shell", CMD_SHELL},     {"run", CMD_RUN},
 };
 
 const char *cmd_name(enum cmd c) {
@@ -100,6 +101,15 @@ int cli_parse(int argc, char **argv, options_t *o) {
         if (strcmp(a, "--no-rpath") == 0) {
             o->rpath = 0;
             continue;
+        }
+        /* Everything after `--` is an argument, never an option: that is how a
+         * command carried by `run` keeps its own flags, and how extra build
+         * arguments reach a driver. */
+        if (strcmp(a, "--") == 0) {
+            ++i;
+            for (; i < argc; i++)
+                strlist_add(&o->args, argv[i]);
+            break;
         }
         if (a[0] == '-' && a[1] != '\0') {
             fprintf(stderr, "retrolunar: unknown option '%s'\n", a);

@@ -17,7 +17,7 @@
 int build_script_for(const options_t *o, char **packages_out, graph_t *g, char **script,
                      size_t *len);
 
-static int run_script(const char *path, const char *script, size_t len) {
+int run_script(const char *path, const char *script, size_t len) {
     int rc;
     if (path != NULL) {
         size_t need = strlen(path) + 16;

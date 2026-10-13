@@ -10,9 +10,11 @@
 #include "tree.h"
 
 /* Shared by install and generate: resolve the targets and write the script. */
-int build_script_for(const options_t *o, char **packages_out, graph_t *g, char **script,
-                     size_t *len) {
-    if (o->args.n == 0) {
+/* The targets are a parameter because `shell` builds the dependencies its
+ * manifest names, not the positionals the command line carried. */
+int build_script_for_targets(const options_t *o, const char *const *targets, size_t ntargets,
+                             char **packages_out, graph_t *g, char **script, size_t *len) {
+    if (ntargets == 0) {
         fputs("retrolunar: no targets given\n", stderr);
         return 1;
     }
@@ -25,7 +27,7 @@ int build_script_for(const options_t *o, char **packages_out, graph_t *g, char *
         free(packages);
         return 1;
     }
-    if (resolve_targets(packages, (const char *const *)o->args.v, o->args.n, g) != 0) {
+    if (resolve_targets(packages, targets, ntargets, g) != 0) {
         free(packages);
         free(nest);
         return 1;
@@ -40,6 +42,12 @@ int build_script_for(const options_t *o, char **packages_out, graph_t *g, char *
     }
     *packages_out = packages;
     return 0;
+}
+
+int build_script_for(const options_t *o, char **packages_out, graph_t *g, char **script,
+                     size_t *len) {
+    return build_script_for_targets(o, (const char *const *)o->args.v, o->args.n, packages_out,
+                                    g, script, len);
 }
 
 int cmd_install(const options_t *o) {
