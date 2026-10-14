@@ -216,6 +216,29 @@ else
     echo "this /tmp is not a tmpfs: the warning is not exercised here"
 fi
 
+echo "=== one nest, several builds ==="
+# The lock is per node, not per nest: what builds share is the store, and an entry is
+# named by its content, so two builds of different nodes are ordinary. A second build of
+# the *same* node waits on that node's lock and then finds it fresh — the proof being
+# that the shared dependency is compiled once across the two runs, not twice.
+CNEST="$WORK/conc-nest"
+rm -rf "$CNEST"
+"$RL" --packages "$PACKAGES" --nest "$CNEST" generate -o "$WORK/conc.sh" "zlib@$native" \
+    >"$WORK/conc-gen.log" 2>&1 ||
+    { echo "could not generate the concurrency script:"; cat "$WORK/conc-gen.log"; exit 1; }
+sh -n "$WORK/conc.sh" || { echo "the concurrency script does not parse"; exit 1; }
+env -i PATH="$PATH" HOME="$HOME" sh "$WORK/conc.sh" >"$WORK/conc-a.log" 2>&1 &
+first=$!
+sleep 1
+env -i PATH="$PATH" HOME="$HOME" sh "$WORK/conc.sh" >"$WORK/conc-b.log" 2>&1 || true
+wait "$first" || { echo "the first of the two builds failed:"; tail -6 "$WORK/conc-a.log"; exit 1; }
+built=$(cat "$WORK/conc-a.log" "$WORK/conc-b.log" | grep -c 'relax: 1')
+[ "$built" = "1" ] ||
+    { echo "the shared dependency was built $built times, not once"; exit 1; }
+grep -q "skip zlib@$native (fresh)" "$WORK/conc-b.log" ||
+    { echo "the second build did not skip what the first one built:"; cat "$WORK/conc-b.log"; exit 1; }
+echo "two builds in one nest: the shared dependency was compiled once, the second skipped it"
+
 echo "=== export, and the program it produces ==="
 "$RL" env --packages "$PACKAGES" --nest "$NEST" "$CHAIN" >"$WORK/env.sh"
 libs=$(ls -d "$NEST"/*@"$native"/lib "$NEST"/*@"$native"/lib64 2>/dev/null | tr '\n' ':' || true)

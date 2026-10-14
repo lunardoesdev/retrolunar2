@@ -411,6 +411,14 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
     int probes = node_has_probes(g, i);
 
     fprintf(out, "\n# --- %s@%s (%zu/%zu) ---\n", p->name, p->sys, i + 1, g->n);
+    /* One node, one build. The lock is the node's rather than the nest's, so other
+     * nodes of this same nest build beside this one; a second build of this node
+     * waits here and then finds it fresh below, which is what makes two overlapping
+     * invocations of the same target cost one build instead of two. */
+    fprintf(out,
+            "  exec 8>>\"$NESTDIR/.retrolunar/locks/%s@%s.lock\"\n"
+            "  flock 8\n",
+            p->name, p->sys);
     emit_state_path(g, i, out);
     emit_read_state(out, "fingerprint", "_stored");
     if (probes)
@@ -438,6 +446,7 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
         emit_build(g, i, sys, out);
         emit_publish(g, i, fps[i], out);
         fputs("  fi\n", out);
+        fputs("  flock -u 8\n", out);
         return;
     }
 
@@ -464,6 +473,7 @@ static void emit_block(const graph_t *g, size_t i, char **fps, FILE *out) {
     emit_build(g, i, sys, out);
     emit_publish(g, i, fps[i], out);
     fputs("  fi\n", out);
+    fputs("  flock -u 8\n", out);
 }
 
 /* --- the whole script ---------------------------------------------------- */
@@ -543,12 +553,13 @@ static void emit_header(const char *nestdir, const char *packages, int cores, FI
             "  unset _f _from _done _left _list\n"
             "}\n"
             "\n"
-            "# One build at a time per nest: the second one fails instead of queueing.\n"
+            "# The nest lock is shared by builds and exclusive for the commands that move\n"
+            "# entries (gc, cache push and pull): two builds in one nest are ordinary -\n"
+            "# what they share is the store, and a store entry is named by its content -\n"
+            "# while one of them pruning what the other is publishing is not.\n"
+            "mkdir -p \"$NESTDIR/.retrolunar/locks\"\n"
             "exec 9>>\"$NESTDIR/.retrolunar.lock\"\n"
-            "if ! flock -n 9; then\n"
-            "  echo \"retrolunar: another build is using NESTDIR: $NESTDIR\" >&2\n"
-            "  exit 1\n"
-            "fi\n"
+            "flock -s 9\n"
             "\n"
             "# Everything a build writes goes under $NESTDIR/tmp, so a nest on a tmpfs is a\n"
             "# nest in RAM: a long build (perl, libjxl) exhausts it and dies with \"Disk\n"
