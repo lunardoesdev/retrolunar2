@@ -154,6 +154,31 @@ echo "zlib's .pc answered $zprefix, and $moved after the whole nest moved away"
 grep -q 'still name the entry by path' "$WORK/build.log" ||
     { echo "the relax pass reported nothing it could not do" >&2; exit 1; }
 
+echo "=== every ELF we ship finds its libraries by \$ORIGIN ==="
+# One generated script builds several nodes in one process, and a flag spelled for one
+# toolchain that reaches another is how `$ORIGIN` came out as `RIGIN` in a library: make
+# read `$O` as one of its own variables. The runtime path of every ELF in every entry is
+# the check, so the next time it happens the run stops here.
+find "$NEST/store" -type f >"$WORK/elf-list"
+n=0; bad=0
+while read -r f; do
+    readelf -d "$f" 2>/dev/null | grep -q 'Dynamic section' || continue
+    n=$((n+1))
+    rp=$(readelf -d "$f" 2>/dev/null | sed -n 's/.*(\(RUNPATH\|RPATH\)).*\[\(.*\)\]/\2/p')
+    case ":$rp:" in
+        *':$ORIGIN:'*) ;;
+        *) echo "  $(basename "$f"): no \$ORIGIN in the runtime path: $rp"; bad=$((bad+1)) ;;
+    esac
+    case ":$rp:" in
+        *':RIGIN:'*) echo "  $(basename "$f"): a mangled \$ORIGIN: $rp"; bad=$((bad+1)) ;;
+    esac
+    case "$rp" in
+        *"$NEST/tmp/"*) echo "  $(basename "$f"): a staging path in the runtime path: $rp"; bad=$((bad+1)) ;;
+    esac
+done <"$WORK/elf-list"
+echo "checked $n ELF file(s), $bad bad"
+[ "$bad" -eq 0 ] || exit 1
+
 echo "=== export, and the program it produces ==="
 "$RL" env --packages "$PACKAGES" --nest "$NEST" "$CHAIN" >"$WORK/env.sh"
 libs=$(ls -d "$NEST"/*@"$native"/lib "$NEST"/*@"$native"/lib64 2>/dev/null | tr '\n' ':' || true)
