@@ -95,9 +95,40 @@ CLOSURE_PATTERNS = [
     re.compile(r'^RUSTFLAGS="-L \$PREFIX/lib"\s*$'),
 ]
 
-# Assignments whose right-hand side is a prefix the build system must be told about.
-PREFIXY = re.compile(r'(--?prefix=|INSTALL_PREFIX=|CMAKE_INSTALL_PREFIX=|tooldir=|lib=|--docdir=|'
-                     r'--with-pkg-config-libdir=|--with-tlibdir=|prefix=)')
+# The name part of an argument that tells a build system where something lives or is
+# installed. What such a value ends up in — a `.pc` file's prefix, a cmake config, a
+# `-config` script — is read by whoever builds against this package, so it has to name
+# the directory the package really lives in. A destination a recipe copies into is a
+# different thing entirely, and is staged.
+PREFIXY = re.compile(r'(?:-{1,2}[A-Za-z][A-Za-z0-9_-]*=|'
+                     r'(?:PREFIX|prefix|lib|libdir|tooldir|INSTALL_PREFIX)=)')
+
+# A whole prefix argument, in either spelling: the port's own `$OUTPKG`, v1's `$OUT`
+# (the staging directory there), and `$PREFIX` when a fragment already went through
+# one of the rewrites above.
+PREFIX_ARG = re.compile(PREFIXY.pattern + r'"?(\$OUT|\$OUTPKG|\$PREFIX)(?![A-Za-z0-9_])')
+
+
+def hold_prefix_args(text):
+    """Set the prefix arguments aside, so the caller can rewrite everything else.
+
+    Returns the text with those occurrences replaced by markers, and what was held.
+    `release` puts them back with the spelling the caller wants, which is `$OUTPKG`:
+    the package's final directory.
+    """
+    held = []
+
+    def keep(m):
+        held.append(m.group(0))
+        return "\x00%d\x00" % (len(held) - 1)
+
+    return PREFIX_ARG.sub(keep, text), held
+
+
+def release_prefix_args(held, text, spelling):
+    for i, arg in enumerate(held):
+        text = text.replace("\x00%d\x00" % i, arg[:arg.index("$")] + spelling)
+    return text
 
 
 
@@ -368,26 +399,25 @@ def rewrite_body(body, path, for_system, own_name=None):
                 new = re.sub(r'\$OUT(?![A-Za-z0-9_])', "$PREFIX", new)
                 new = new.replace("$PREFIX/$PREFIX", "$PREFIX")
 
-            # $OUT: the staging directory in v1. A prefix the build system is told about
-            # must be the final path; everything else writes through $PREFIX.
-            if "$OUT" in new and not own_name:
-                if PREFIXY.search(new):
-                    new = re.sub(r'\$OUT(?![A-Za-z0-9_])', "$OUTPKG", new)
-                    REPORT.add(path, "rewrote $OUT to $OUTPKG (install prefix)", line)
-                else:
-                    new = re.sub(r'\$OUT(?![A-Za-z0-9_])', "$PREFIX", new)
-                    REPORT.add(path, "rewrote $OUT to $PREFIX (staging)", line)
-
             # v1's $PREFIX meant "where the dependencies are". v2 has no such single
             # directory, so an unmapped use would silently mean the staging path.
-            # Only occurrences that were already in the source are flagged: the
-            # staging path this function writes is not one of them.
+            # This runs before $OUT is rewritten below, so the staging path that
+            # rewrite writes cannot be mistaken for one of v1's.
             if for_system and re.search(r'\$PREFIX(?![A-Za-z0-9_])', new):
                 new = re.sub(r'\$PREFIX(?![A-Za-z0-9_])', "${RETROLUNAR_PORT_SYSTEM_PREFIX}", new)
                 REPORT.add(path, "FLAGGED $PREFIX in a system fragment", line)
             if flagged_prefix:
                 new = re.sub(r'\$PREFIX(?![A-Za-z0-9_])', "${RETROLUNAR_PORT_PREFIX}", new)
                 REPORT.add(path, "FLAGGED $PREFIX meaning dependencies", line)
+
+            # $OUT: the staging directory in v1. An argument that names a prefix becomes
+            # the final directory, which is what the build system records about itself;
+            # everything else writes through the staging path.
+            if "$OUT" in new and not own_name:
+                held_text, held = hold_prefix_args(new)
+                staged = re.sub(r'\$OUT(?![A-Za-z0-9_])', "$PREFIX", held_text)
+                new = release_prefix_args(held, staged, "$OUTPKG")
+                REPORT.add(path, "rewrote $OUT (a prefix to $OUTPKG, the rest to $PREFIX)", line)
 
         if not comment and "$(command -v" in new:
             new = re.sub(r'\$\(command -v ([A-Za-z0-9_.+-]+)\)', r'$(command -v \1 || true)', new)
@@ -1001,19 +1031,21 @@ def _host_os(buckets):
             return m.group(1)
     return None
 
+
 def stage_installs(text, pkg=None):
-    """Point install destinations at the staging prefix.
+    """Stage the destinations, and leave the prefixes naming the final path.
 
     A package directory is replaced by the tool, never written into: a step that
-    installs into $OUTPKG would be racing that, and a build that failed halfway
-    would leave a half-written package behind. Everything installs into $PREFIX,
-    which is the staged copy of the same layout, and the tool moves it into place."""
-    if pkg == "termcap":
-        # The .pc file describes where the library lives once published, and that
-        # is the path a consumer reads, so its content keeps the real one; only
-        # the file's own destination is staged.
-        return text.replace("> $OUTPKG/", "> $PREFIX/")
-    return text.replace("$OUTPKG", "$PREFIX")
+    installs into $OUTPKG would be racing that, and a build that failed halfway would
+    leave a half-written package behind. So a destination a recipe copies into is
+    $PREFIX, the staged copy of the same layout, and the tool moves it into place.
+
+    An argument that *names* a prefix is the other way round: it stays $OUTPKG,
+    because the path a package records about itself is the path it has to be read at,
+    and a .pc file whose prefix is the staging tree sends every consumer to a directory
+    that is gone the moment the build ends."""
+    held_text, held = hold_prefix_args(text)
+    return release_prefix_args(held, held_text.replace("$OUTPKG", "$PREFIX"), "$OUTPKG")
 
 
 def shell_line(s):
