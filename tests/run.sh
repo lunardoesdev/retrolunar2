@@ -191,6 +191,31 @@ done <"$WORK/elf-list"
 echo "checked $n ELF file(s), $bad bad"
 [ "$bad" -eq 0 ] || exit 1
 
+echo "=== the nest keeps its own scratch, and says when it is in RAM ==="
+# Everything a build writes transiently goes under $NESTDIR/tmp and each node
+# removes it when it ends, so a nest is self-contained and /tmp is never involved.
+# The one thing the script cannot fix is the caller's choice of nest: a nest on a
+# tmpfs is a nest in RAM, and a long build there dies with "Disk quota exceeded",
+# which reads like a broken recipe. It says so instead.
+if [ -n "$(ls -A "$NEST/tmp" 2>/dev/null)" ]; then
+    echo "the nest's tmp/ is not empty after a build:" >&2
+    ls -A "$NEST/tmp" >&2
+    exit 1
+fi
+echo "the nest's tmp/ is empty: work and stage are removed per node"
+if [ "$(stat -f -c %T /tmp 2>/dev/null)" = tmpfs ]; then
+    rm -rf /tmp/retrolunar-probe
+    "$RL" --packages "$PACKAGES" --nest /tmp/retrolunar-probe generate -x 'hello@source' \
+        >/dev/null 2>"$WORK/tmpfs.log" ||
+        { echo "the probe build in /tmp failed:"; cat "$WORK/tmpfs.log"; exit 1; }
+    grep -q 'NESTDIR is on a tmpfs' "$WORK/tmpfs.log" ||
+        { echo "a nest on a tmpfs did not say so:"; cat "$WORK/tmpfs.log"; exit 1; }
+    rm -rf /tmp/retrolunar-probe
+    echo "a nest on a tmpfs says so before the work starts"
+else
+    echo "this /tmp is not a tmpfs: the warning is not exercised here"
+fi
+
 echo "=== export, and the program it produces ==="
 "$RL" env --packages "$PACKAGES" --nest "$NEST" "$CHAIN" >"$WORK/env.sh"
 libs=$(ls -d "$NEST"/*@"$native"/lib "$NEST"/*@"$native"/lib64 2>/dev/null | tr '\n' ':' || true)

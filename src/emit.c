@@ -548,7 +548,18 @@ static void emit_header(const char *nestdir, const char *packages, int cores, FI
             "if ! flock -n 9; then\n"
             "  echo \"retrolunar: another build is using NESTDIR: $NESTDIR\" >&2\n"
             "  exit 1\n"
-            "fi\n",
+            "fi\n"
+            "\n"
+            "# Everything a build writes goes under $NESTDIR/tmp, so a nest on a tmpfs is a\n"
+            "# nest in RAM: a long build (perl, libjxl) exhausts it and dies with \"Disk\n"
+            "# quota exceeded\", which reads like a broken recipe and is not one. Nothing\n"
+            "# here can move the nest, but it can say so before the work starts.\n"
+            "if [ \"$(stat -f -c %%T \"$NESTDIR\" 2>/dev/null)\" = tmpfs ]; then\n"
+            "  echo \"retrolunar: NESTDIR is on a tmpfs: $NESTDIR\" >&2\n"
+            "  df -h \"$NESTDIR\" 2>/dev/null | tail -1 >&2\n"
+            "  echo \"retrolunar:   a long build can exhaust it; put the nest on disk with --nest DIR\" >&2\n"
+            "fi\n"
+            "\n",
             RETROLUNAR_VERSION, n, p, cores);
     free(n);
     free(p);
