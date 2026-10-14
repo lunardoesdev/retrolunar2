@@ -180,8 +180,22 @@ nestdir/
     9816121a…                the same package built from another input
   .retrolunar/state/
     clang-native/zlib.toml   fingerprint, probes, and the tool that wrote it
+  .retrolunar/env.sh         the environment `run` and `shell` pass to a command
   tmp/work-XXXXXX/           where a build runs (removed when it ends)
   tmp/stage-XXXXXX/          where an installer writes (renamed into the store)
+```
+
+A build keeps its scratch to itself: the work and stage directories are inside the nest,
+under `tmp/`, and each node removes its own when it ends, so `/tmp` is never involved and
+`nestdir/tmp` is empty again between nodes. The one thing the script cannot choose is where
+the nest itself lives — and a nest on a tmpfs is a nest in RAM, so a long build there
+(perl's extension build, libjxl) runs the filesystem out of space and dies with `Disk quota
+exceeded`, which reads like a broken recipe and is not one. The script says so before the
+work starts, with the space left and the flag that fixes it:
+
+```
+retrolunar: NESTDIR is on a tmpfs: /tmp/nest (2.1G free of 2.9G)
+retrolunar:   a long build can exhaust it; put the nest on disk with --nest DIR
 ```
 
 A name is a convenience, never an input: nothing in a build reads `zlib@clang-native`, so
