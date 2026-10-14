@@ -158,10 +158,20 @@ int cmd_shell(const options_t *o) {
     }
 
     char *nest = tree_nest(o->nest);
+    /* No nest means nowhere honest to put the environment script, and the tool
+     * does not use /tmp for anything: a nest in RAM is the caller's business, but
+     * writing into a filesystem the caller never named is not. */
+    if (nest == NULL) {
+        fputs("retrolunar: no nest for the environment; pass --nest DIR\n", stderr);
+        graph_free(&g);
+        free(packages);
+        manifest_free(&m);
+        return 1;
+    }
     strlist_t lines;
     strlist_init(&lines);
-    closure_env(&g, nest != NULL ? nest : "", &shell_targets, &lines);
-    char *wrapper = write_wrapper(&lines, nest != NULL ? nest : "/tmp");
+    closure_env(&g, nest, &shell_targets, &lines);
+    char *wrapper = write_wrapper(&lines, nest);
     printf("retrolunar: environment in %s\n", wrapper != NULL ? wrapper : "(not written)");
     strlist_free(&lines);
     graph_free(&g);
