@@ -130,6 +130,18 @@ static void emit_prelude(const graph_t *g, size_t i, const char *fp, FILE *out) 
     char *outpkg = xmalloc(strlen(p->name) + strlen(p->sys) + 2);
     sprintf(outpkg, "%s@%s", p->name, p->sys);
     char *out_line = out_quoted(p, fp);
+    /* RECIPEDIR is the directory the recipe that won lives in, rather than
+     * `$PACKAGEDIR/<name>` spelled out: for a package in the tree the two are the
+     * same, and for a project — where the manifest *is* the recipe — only this one
+     * is right, and a project's build reaches its own sources by $RECIPEDIR/<file>. */
+    char *recipedir = xstrdup(p->file != NULL ? p->file : "");
+    char *rslash = strrchr(recipedir, '/');
+    if (rslash != NULL)
+        *rslash = '\0';
+    char *rq = sq(recipedir);
+    fprintf(out, "    RECIPEDIR=%s\n", rq);
+    free(rq);
+    free(recipedir);
     fprintf(out,
             "    # This node's environment begins where the caller's did: what the block\n"
             "    # before it exported was that block's build, and none of it is this one's.\n"
@@ -150,7 +162,6 @@ static void emit_prelude(const graph_t *g, size_t i, const char *fp, FILE *out) 
             "    OUTPKG=%s\n"
             "    DESTDIR=\"$STAGE\"\n"
             "    PREFIX=\"$DESTDIR$OUTPKG\"\n"
-            "    RECIPEDIR=\"$PACKAGEDIR/%s\"\n"
             // DESTDIR goes to the environment as well, and that is what makes the
             // rest work: an installer is told the *final* prefix ($OUTPKG), because
             // what it writes about itself — a .pc file's prefix, a cmake config, a
@@ -159,7 +170,7 @@ static void emit_prelude(const graph_t *g, size_t i, const char *fp, FILE *out) 
             // Without it in the environment, every installer would write straight
             // into the package directory and publish would throw that away.
             "    export OUTPKG PREFIX RECIPEDIR DESTDIR\n",
-            out_line, p->name);
+            out_line);
     if (strcmp(p->sys, "source") != 0) {
         char *sysdir = xmalloc(strlen(p->sys) + 8);
         sprintf(sysdir, "system@%s", p->sys);
@@ -244,6 +255,11 @@ static void emit_publish(const graph_t *g, size_t i, const char *fp, FILE *out) 
                 ind, fp);
     }
     fprintf(out, "%smv \"$_state.tmp\" \"$_state\"\n", ind);
+    /* The tool's own version goes in beside the fingerprint: it is an input of
+     * every fingerprint, and a state file that does not name this tool says
+     * nothing about what this tool would build. */
+    fprintf(out, "%sprintf 'tool = \"%s\"' >> \"$_state\" && echo >> \"$_state\"\n",
+            ind, RETROLUNAR_VERSION);
     fprintf(out, "%srm -rf \"$WORK\" \"$STAGE\"\n%strap - EXIT\n", ind, ind);
 }
 
@@ -682,18 +698,27 @@ static char *stored_when_unchanged(const graph_t *g, size_t i, const char *nestd
         free(state);
         return NULL;
     }
-    /* The stored value is the current one, so read it instead of hashing. */
+    /* The stored value is the current one, so read it instead of hashing — but only
+     * when this tool is the one that wrote it: the tool's version is an input of
+     * every fingerprint, so a state file naming another tool cannot be read as an
+     * answer about what this one would build. Without this, an upgraded tool kept
+     * every entry and rebuilt nothing, since the shortcut hands the script the
+     * stored value to compare against itself. */
     size_t len = 0;
     char *text = read_file(state, &len);
     free(state);
     if (text == NULL)
         return NULL;
     char *line = strstr(text, "fingerprint = \"");
+    char *tline = strstr(text, "tool = \"");
     char *out = NULL;
-    if (line != NULL) {
+    if (line != NULL && tline != NULL) {
         line += strlen("fingerprint = \"");
+        tline += strlen("tool = \"");
         char *end = strchr(line, '"');
-        if (end != NULL)
+        char *tend = strchr(tline, '"');
+        if (end != NULL && tend != NULL && (size_t)(tend - tline) == strlen(RETROLUNAR_VERSION) &&
+            strncmp(tline, RETROLUNAR_VERSION, strlen(RETROLUNAR_VERSION)) == 0)
             out = xstrndup(line, (size_t)(end - line));
     }
     free(text);

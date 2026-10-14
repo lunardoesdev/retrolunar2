@@ -36,4 +36,25 @@ echo "e) the build file that wins changes"
 cp "$PACKAGES/libpng/generic.toml" "$LOG.bak"
 printf '\n# a comment is a change\n' >>"$PACKAGES/libpng/generic.toml"; run
 cp "$LOG.bak" "$PACKAGES/libpng/generic.toml"; run
+echo "f) a state file written by another tool"
+# The tool's version is an input of every fingerprint, and a state file says which
+# tool wrote it. A shortcut that trusted such a file would hand the script the stored
+# value to compare against itself, so an upgraded tool rebuilt nothing: the fingerprint
+# here is one no tool could compute, and the state is the newest file in the nest.
+state="$NEST/.retrolunar/state/$native/libpng.toml"
+[ -f "$state" ] || { echo "  no state at $state"; exit 1; }
+cp "$state" "$LOG.state.bak"
+sed -e 's/^tool = .*/tool = "0.0.0"/' \
+    -e 's/^fingerprint = .*/fingerprint = "0000000000000000000000000000000000000000000000000000000000000000"/' \
+    "$state" >"$state.new"
+mv "$state.new" "$state"
+run
+if grep -q "skip libpng@$native (fresh)" "$LOG"; then
+    echo "  libpng stayed fresh with a state file written by another tool"
+    exit 1
+fi
+grep -q "^tool = \"$("$RL" --version | awk '{print $2}')\"$" "$state" ||
+    { echo "  the state was not rewritten by this tool:"; cat "$state"; exit 1; }
+cp "$LOG.state.bak" "$state"
+echo "g) and fresh again"; run
 echo "log: $LOG"

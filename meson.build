@@ -1,5 +1,5 @@
 project('retrolunar', 'c',
-  version : '2.0.0',
+  version : '2.10.0',
   default_options : ['c_std=gnu11', 'warning_level=3'],
 )
 
