@@ -247,31 +247,46 @@ out of `nestdir/libpng@clang-native`.
 - Array handling when peer TOML files merge (assumption: replace, not append).
 - Whether `env` needs a `--json` form.
 
-## Caches: what is agreed
+## Caches: the nest is the cache
 
-A cache is named, and only named: `[cache.NAME] url = ...`, a directory or an http(s) one. The
-single-key `[cache] url` form goes away; a project that has one says the same thing in one more
-line, and every cache has a name to point at when a command wants one cache and not the others.
+A cache is named, and only named: `[cache.NAME] url = ...`. The single-key `[cache] url` form
+goes away; a project that has one says the same thing in one more line, and every cache has a
+name to point at when a command wants one cache and not the others.
 
-`push = true` marks a cache as writable, and nothing else is ever written to: a url is not a
-destination because it was named, and the default is off everywhere, a local directory included.
+No archives, and no links: a cache is a nest, and what is in it are the entry directories the
+build already produced. A filesystem with no hardlinks (a share, a mount, a FAT volume) is
+assumed, so nothing is ever linked into place — an entry travels as a plain copy of a directory.
 
-A build fills it. The step belongs in the emitted script, in a node's block, right after
-publishing: the entry's name is the fingerprint the tool has already computed, so "send this" is
-a short tail per node — and the script stays a script, so running it by hand, which is the point
-of the whole thing, fills the cache too. A nest remembers what it has sent, in
-`<nest>/.retrolunar/sent`, so a rerun sends nothing and asks the network nothing; `cache push`
-stays for what was built earlier, and for saying "again, and check".
+What a nest carries for another nest to take from it:
 
-Reading follows the order the manifest declares, as repositories do: the first cache that has
-the entry is the one used, a miss is the next, and no cache having it is a build. `cache pull`
-stays as the way to ask before a build; a build asking by itself is the other half of this and is
-not built yet.
+- `store/<fingerprint>` — the entry, named by the hash of everything that went into it: the
+  recipe, the system's fragments, the dependencies transitively, the probe output. Already so.
+- `.retrolunar/manifests/<fingerprint>` — what is inside that directory: every path with its
+  digest and its mode bits. This is what makes a plain copy a transfer, and what lets a host that
+  is only a static file server serve the manifest and then the files. It also closes the one race
+  a store has — publishing replaces the directory it finds (`rm -rf` + `mv`) — because a copy
+  taken mid-publish fails its own manifest and is treated as a miss.
+- `.retrolunar/entries` — `<fingerprint> <content digest>`, what came out for that name. Already
+  so, and it stays the nest's own record that one name has one content and not another.
 
-Open, and small either way: what a directory cache holds. An entry archive, which is what a url
-cache holds — one shape everywhere, and gzip on every build — or the entry directory itself,
-hardlinked, so a local cache costs a link where a remote one costs a transfer. Only a url cache
-needs the archive in that case, and the digest it publishes.
+`[cache.NAME] url` then names a nest: a directory (a share, a mount, another machine's nest) or
+an http(s) url serving one. Reading follows the declared order, the first nest that has the entry
+is the one used, a miss is the next, and no nest having it is a build. Taking an entry is: copy
+the directory, check every file against the manifest, put it in `store/` under the same name,
+write the state file that says "built" and point the name at it. That last step is what the
+present `cache pull` leaves out, which is why the build after a pull rebuilds the entry the pull
+just fetched.
+
+Probes need no case of their own here: the name is the hash of the inputs *including* the probe
+output, so a machine whose probes differ computes a different name and simply does not find the
+entry.
+
+Open: whether anything writable is still wanted. With entries being directories in a nest,
+publishing is a property of the nest (a share, a web root, an rsync destination) and not a
+command, so `push`, `push = true` and a nest remembering what it sent have nothing left to do.
+A place that accepts a build over the network is then only for what a shared filesystem does not
+cover — CI artifacts are the usual one — and that is a separate question. Plain http also costs
+one request per file where a share costs one copy.
 
 ## The four phases: what they came to
 
@@ -323,7 +338,7 @@ them: a project of its own, a second version of a package keeping its own entry,
   after `cache pull zlib@clang-native` into an empty nest, the next `generate -x` downloads the
   source and builds the entry the pull had just verified, because `cache pull` writes the name
   and the entries index and never the state file that says "built", and publishing replaces the
-  store directory it finds. See "Caches: what is agreed" for what a cache is meant to become.
+  store directory it finds. See "Caches: the nest is the cache" for what a cache is meant to be.
 - Nothing is signed. An entry is checked against the digest published beside it,
   which catches a corrupted transfer, not a hostile cache.
 - Tokens for a private repository are the environment's: git reads them, nothing
