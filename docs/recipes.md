@@ -138,6 +138,18 @@ starts from is:
 There are also `pre` and `post` on any recipe — shell that runs before and after the body
 (the tree's `zlib/mingw64.toml` uses `post` to add the `libz` symlink mingw needs).
 
+## What counts as an input
+
+The files that make a package rebuild are its recipe files — the build file that won and
+`source.toml` — plus its dependencies, its system's directory, the host facts its `probe`
+reports, and the tool's own version. Everything else in the package directory is invisible to
+the fingerprint, which matters for a package that keeps its own sources next to its recipe:
+editing one of those sources alone rebuilds nothing, and the way to make such a change an
+input is to change the recipe — a `version` bump is the usual one, and it also moves the
+name of the entry, so two builds stay distinguishable. Upstream sources are an input by
+construction, since `source.toml` pins the URL. [docs/tutorial.md](tutorial.md) shows both
+halves of this on a real project.
+
 ## An override, and why it is a file
 
 `zlib/mingw64.toml` is a whole recipe, not a patch:

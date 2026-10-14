@@ -1,0 +1,17 @@
+# The manifest of this directory's own package. Its name is the directory name
+# (`mytool`), so nothing here names it.
+deps = ["mylib@clang-native"]
+
+build = """
+mkdir -p "$PREFIX/bin"
+$CC $CFLAGS -I"$mylib_PREFIX/include" "$RECIPEDIR/src/main.c" \
+    -o "$PREFIX/bin/mytool" -L"$mylib_PREFIX/lib" -lmylib
+"""
+
+# One repository of my own, searched first, and the tree next to this one for
+# everything else. Both are relative to where the tool is run, which is here.
+[repo.mine]
+url = "./packages"
+
+[repo.packages]
+url = "../../../retrolunar2-packages"

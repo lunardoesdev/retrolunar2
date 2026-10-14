@@ -1,5 +1,8 @@
 # Projects
 
+Starting from nothing? [docs/tutorial.md](tutorial.md) walks one directory all the way
+through: a manifest, a program next to it, and a repository of extra packages beside it.
+
 A project is a directory with a `retrolunar.toml` in it. The manifest is a recipe — the same
 keys a tree recipe has — for the package this directory *is*, plus where its packages come
 from. There is no second format to learn: what you write for a project can be moved into a

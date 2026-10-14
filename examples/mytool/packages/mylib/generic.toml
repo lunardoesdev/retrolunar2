@@ -1,0 +1,10 @@
+# A package that is nothing but its own two files: the recipe and the sources sit
+# together, so the build copies from $RECIPEDIR and there is nothing to fetch.
+version = "0.1.0"
+
+build = """
+mkdir -p "$PREFIX/include" "$PREFIX/lib"
+cp "$RECIPEDIR/mylib.h" "$PREFIX/include/"
+$CC $CFLAGS -fPIC -c "$RECIPEDIR/mylib.c" -o mylib.o
+$AR rcs "$PREFIX/lib/libmylib.a" mylib.o
+"""

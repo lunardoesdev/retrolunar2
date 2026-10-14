@@ -14,6 +14,7 @@ this README and `docs/` are how to use the thing.
 
 | | |
 | --- | --- |
+| [docs/tutorial.md](docs/tutorial.md) | your first project: a manifest, a program beside it, a repository of your own packages |
 | [docs/tool.md](docs/tool.md) | the commands, the script they print, where things land |
 | [docs/recipes.md](docs/recipes.md) | writing a package: a build body, a build system, an override |
 | [docs/systems.md](docs/systems.md) | what a system is, and how to add one |
