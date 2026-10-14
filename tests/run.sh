@@ -122,6 +122,20 @@ start=$(date +%s)
 echo "rerun: $(( $(date +%s) - start ))s, skipped $(grep -c '(fresh)' "$WORK/again.log") nodes"
 grep -q 'skip .* (fresh)' "$WORK/again.log" || { echo "nothing was skipped: freshness is broken" >&2; exit 1; }
 
+echo "=== an entry describes where it is ==="
+# What a package records about itself is what a consumer reads, so a .pc file's prefix
+# has to be the directory the entry really lives in — not the staging tree the build
+# wrote through on its way there. DESTDIR is what redirects the write.
+command -v pkg-config >/dev/null ||
+    { echo "pkg-config is not here, so this check cannot run" >&2; exit 1; }
+zprefix=$(PKG_CONFIG_LIBDIR="$NEST/zlib@$native/share/pkgconfig" pkg-config --variable=prefix zlib)
+case "$zprefix" in
+    "$NEST"/tmp/*) echo "zlib's .pc records the staging path: $zprefix" >&2; exit 1 ;;
+esac
+[ -f "$zprefix/include/zlib.h" ] ||
+    { echo "zlib's .pc records a directory that is not there: $zprefix" >&2; exit 1; }
+echo "zlib's .pc says it is in $zprefix"
+
 echo "=== export, and the program it produces ==="
 "$RL" env --packages "$PACKAGES" --nest "$NEST" "$CHAIN" >"$WORK/env.sh"
 libs=$(ls -d "$NEST"/*@"$native"/lib "$NEST"/*@"$native"/lib64 2>/dev/null | tr '\n' ':' || true)

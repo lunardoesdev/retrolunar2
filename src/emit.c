@@ -139,7 +139,14 @@ static void emit_prelude(const graph_t *g, size_t i, const char *fp, FILE *out) 
             "    DESTDIR=\"$STAGE\"\n"
             "    PREFIX=\"$DESTDIR$OUTPKG\"\n"
             "    RECIPEDIR=\"$PACKAGEDIR/%s\"\n"
-            "    export OUTPKG PREFIX RECIPEDIR\n",
+            // DESTDIR goes to the environment as well, and that is what makes the
+            // rest work: an installer is told the *final* prefix ($OUTPKG), because
+            // what it writes about itself — a .pc file's prefix, a cmake config, a
+            // -config script — has to name the directory the package will live in,
+            // and DESTDIR is the standard way to say "write it over there instead".
+            // Without it in the environment, every installer would write straight
+            // into the package directory and publish would throw that away.
+            "    export OUTPKG PREFIX RECIPEDIR DESTDIR\n",
             out_line, p->name);
     if (strcmp(p->sys, "source") != 0) {
         char *sysdir = xmalloc(strlen(p->sys) + 8);
