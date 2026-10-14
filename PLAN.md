@@ -9,19 +9,21 @@ recipes come over from `../retrolunar-packages`.
 
 ## Status
 
-P0–P5 are done. The tool, the port and the acceptance run all hold on the host rig; Android is
-the one thing not built (deliberately last, and not verifiable on this machine).
+The work order is complete: the tool, the port and the acceptance run all hold, and Android is
+built as well — one package per build system, on `system@aarch64-android24`, against NDK r29.
+That last check was done by hand and is not part of the acceptance run; the cross systems
+(including the Android ones) resolve in it.
 
-The port (`tools/lua2toml.py`, `../retrolunar2-packages`) converted 59 systems and 236 packages
+The port (`tools/lua2toml.py`, `../retrolunar2-packages`) converted 59 systems and 231 packages
 to TOML, and `PORTING.md` records every line it dropped, rewrote or fixed by hand — the
 `$PREFIX` of v1 was a single shared directory, and each of its uses had to name something
-specific instead. All 781 emitted files parse with both this tool's reader and `tomllib`.
+specific instead. Every emitted file parses with both this tool's reader and `tomllib`.
 
-Acceptance, run end to end after the last change:
+Acceptance, run end to end at `2.9`:
 
-- 711 combinations of package × system resolve with no errors.
+- 693 combinations of package × system resolve with no errors.
 - A clean native build of `pngprobe@clang-native` (zlib → libpng → freetype → pngprobe, the last
-  through cargo) takes 87 s; the run right after it skips 7 of 7 nodes as fresh.
+  through cargo) takes 105 s; the run right after it skips 7 of 7 nodes as fresh.
 - A new file inside `system@clang-native/` — not a TOML file, any file — makes the four build
   nodes of that system stale and leaves the three source nodes alone; taking it away brings the
   tree back to 7 of 7 fresh. An unused file inside a package directory rebuilds nothing;
@@ -31,9 +33,9 @@ Acceptance, run end to end after the last change:
   fits. Files with no runtime path at all — cargo binaries among them — are left untouched and
   the bundle carries `run.sh`, which is what makes it work on a flash drive.
 
-What is left: Android (one system, one package chain), and giving any ELF a runtime path by
-adding a segment (`export` cannot do it today without risking the file, see the notes in
-`src/bin.c`).
+What is left: the cache is not consulted during a build (see "Not done, and why"), and giving
+any ELF a runtime path by adding a segment (`export` cannot do it today without risking the
+file, see the notes in `src/bin.c`).
 
 ## Shape of the thing
 
@@ -232,7 +234,9 @@ closure's value is already in the environment by then.
   a `pngprobe`-style artifact that links libpng, to prove dependencies resolve across
   separate directories.
 - **P5** `env`, `export`, then porting systems and packages from `retrolunar-packages`.
-- **P6** Android and the other cross targets last.
+- **P6** Android and the other cross targets last — done. The cross systems resolve in the
+  acceptance, and Android was built by hand: one package per build system (`cmake`, `meson`,
+  `autoconf`, `make`, `shell`, `python`, `cargo`) on `system@aarch64-android24`.
 
 Acceptance for P4: clean build; rerun prints `skip`; editing
 `system@clang-native/cmake-toolchain.cmake` makes everything stale; the probe links libpng
@@ -288,9 +292,19 @@ them: a project of its own, a second version of a package keeping its own entry,
 
 ### Not done, and why
 
-- The cache is not consulted *during* a build. `cache pull` and then a build is
-  the present shape; a transparent pull needs the tool to answer "is this entry
-  here?" before emitting a node's block, which is the next step and is small.
+- The cache is not consulted *during* a build: `cache pull TARGET...` and then a build is the
+  present shape, and the build does not know what the pull brought. Measured on the host rig:
+  after `cache pull zlib@clang-native` into an empty nest, the next `generate -x` downloads the
+  source and builds the entry the pull had just verified, because `cache pull` writes the name
+  and the entries index and never the state file that says "built", and publishing replaces the
+  store directory it finds. A transparent pull is the tool asking the cache "is this entry
+  here?" for each node before it emits that node's block: the fingerprint is computed anyway to
+  name the entry, so the question costs one file test or one `GET <entry>.sha256` per node, and
+  a miss is simply a build. Two things have to be settled with it: probes (a system that has
+  them runs its setup to answer, so a hit is only known after that) and whether an unreachable
+  cache is a miss or an error. It also puts the cache in the default path of every build, which
+  is a reason to keep it opt-in and to say plainly that the digest catches a corrupted transfer,
+  not a hostile cache.
 - Nothing is signed. An entry is checked against the digest published beside it,
   which catches a corrupted transfer, not a hostile cache.
 - Tokens for a private repository are the environment's: git reads them, nothing
