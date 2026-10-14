@@ -360,7 +360,7 @@ echo "=== the example the documentation walks through builds ==="
 # building is documentation that lies. It is copied out of the tree, pointed at this
 # tree the way a reader points it at theirs, and built with the built-in repository
 # left out: the two repositories the manifest names are all it gets.
-EX="$WORK/example"
+EX="$WORK/mytool"
 rm -rf "$EX" "$WORK/example-nest"
 cp -r "$root/examples/mytool" "$EX"
 rm -f "$EX/retrolunar.lock"
