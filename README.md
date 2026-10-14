@@ -14,8 +14,9 @@ ninja -C builddir
 ./builddir/retrolunar --help
 ```
 
-Needs a C compiler, `meson`, `ninja`. At runtime: `sh`, `flock` (util-linux), `tar`,
-`git` when a repository is fetched, `curl` when the cache is remote.
+Needs a C compiler, `meson`, `ninja`. At runtime: `sh`, `flock` (util-linux), `awk` (it is what
+lets an entry name itself by its own location), `tar`, `git` when a repository is fetched,
+`curl` when the cache is remote.
 
 ## Commands
 

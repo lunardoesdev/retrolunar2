@@ -296,6 +296,22 @@ Decided: nothing writable. There is no `push` and no `push = true`; a cache is a
 from, and publishing a nest is whatever makes its `store/` reachable — a share, a web root, an
 rsync destination.
 
+## An entry names itself
+
+Whatever a package writes about the directory it lives in — a `.pc` file's `prefix`, a cmake
+config, a `-config` script — is read later by someone else, so it has to stay true when the
+entry moves. Publishing therefore relaxes the staged tree on its way out: an occurrence of the
+entry's own final path inside a `.pc` file becomes `${pcfiledir}/../..`, which is the entry
+wherever it is, and the pass prints how many files it rewrote and how many still name the entry
+by path — a path compiled into a binary (m4's own, on the test chain), a libtool archive, a
+`-config` script — because those have no such form yet, and saying so is the honest half.
+
+Measured on the test chain: `zlib`'s `.pc` answers from a nest that has been moved away, and no
+entry in the chain records *another* entry's path, so what a move breaks is only what an entry
+says about itself. That is what a store on a flash drive needs, and it is the ground
+`store/<input>/<output>/` stands on: the .la and `-config` classes have to be relaxed too, and
+then the pair of hashes is worth its place in the path.
+
 ## The four phases: what they came to
 
 Each phase ended with the acceptance green, and the acceptance covers each of
