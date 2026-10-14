@@ -253,33 +253,40 @@ A cache is named, and only named: `[cache.NAME] url = ...`. The single-key `[cac
 goes away; a project that has one says the same thing in one more line, and every cache has a
 name to point at when a command wants one cache and not the others.
 
-No archives, and no links: a cache is a nest, and what is in it are the entry directories the
-build already produced. A filesystem with no hardlinks (a share, a mount, a FAT volume) is
-assumed, so nothing is ever linked into place — an entry travels as a plain copy of a directory.
+No archives, and no links: a cache is a nest, and an entry in it is the directory the build
+produced, under two hashes:
 
-What a nest carries for another nest to take from it:
+    store/<input>/<output>/
 
-- `store/<fingerprint>` — the entry, named by the hash of everything that went into it: the
-  recipe, the system's fragments, the dependencies transitively, the probe output. Already so.
-- `.retrolunar/manifests/<fingerprint>` — what is inside that directory: every path with its
-  digest and its mode bits. This is what makes a plain copy a transfer, and what lets a host that
-  is only a static file server serve the manifest and then the files. It also closes the one race
-  a store has — publishing replaces the directory it finds (`rm -rf` + `mv`) — because a copy
-  taken mid-publish fails its own manifest and is treated as a miss.
-- `.retrolunar/entries` — `<fingerprint> <content digest>`, what came out for that name. Already
-  so, and it stays the nest's own record that one name has one content and not another.
+`<input>` is the hash of everything that went into the node — the recipe, the system's fragments,
+the dependencies transitively, the probe output — and `<output>` is the digest of what came out.
+The path is the whole record: nothing is kept beside it, and a copy is checked by hashing what
+arrived and comparing it with the name of the directory it arrived in. A filesystem with no
+hardlinks (a share, a mount, a FAT volume) is assumed, so an entry travels as a plain copy of a
+directory.
 
-`[cache.NAME] url` then names a nest: a directory (a share, a mount, another machine's nest) or
-an http(s) url serving one. Reading follows the declared order, the first nest that has the entry
-is the one used, a miss is the next, and no nest having it is a build. Taking an entry is: copy
-the directory, check every file against the manifest, put it in `store/` under the same name,
-write the state file that says "built" and point the name at it. That last step is what the
-present `cache pull` leaves out, which is why the build after a pull rebuilds the entry the pull
-just fetched.
+One input has one output, and that is enforced where it is cheap: publishing builds the entry
+beside its place, hashes it, removes whatever else is under that input, and moves the new one in.
+A source showing two outputs under one input is not a nest to take from — refused, and the node is
+built instead.
 
-Probes need no case of their own here: the name is the hash of the inputs *including* the probe
-output, so a machine whose probes differ computes a different name and simply does not find the
-entry.
+Taking an entry is: copy the directory, hash it, compare with the name, put it under the same pair
+in our own store, write the state file that says "built" and point the name at it. That last step
+is what the present `cache pull` leaves out, which is why the build after a pull rebuilds the
+entry the pull just fetched. `[cache.NAME] url` names a nest: a directory, or an http(s) url
+serving one. Reading follows the declared order, the first nest that has the entry is the one
+used, a miss is the next, and no nest having it is a build. Names are the nest's own business — a
+hosted nest is its `store/`, and a reader needs nothing else from it.
+
+Probes need no case of their own: the input hash includes the probe output, so a machine whose
+probes differ computes a different name and simply does not find the entry.
+
+Two costs, taken deliberately: publishing hashes the tree it just wrote — the price of a mapping
+that cannot lie, and the reason a build that is not reproducible shows up at once as two outputs
+under one input — and a copy over plain http cannot be listed by a dumb server, so a share, a
+mount or rsync needs nothing while http needs the server's directory index or a list of paths
+beside the entry. `.retrolunar/entries` goes away with this: the pair in the path says the same
+thing, and the one-output rule takes the place of "this name once had a different content".
 
 Open: whether anything writable is still wanted. With entries being directories in a nest,
 publishing is a property of the nest (a share, a web root, an rsync destination) and not a
