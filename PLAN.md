@@ -254,46 +254,47 @@ goes away; a project that has one says the same thing in one more line, and ever
 name to point at when a command wants one cache and not the others.
 
 No archives, and no links: a cache is a nest, and an entry in it is the directory the build
-produced, under two hashes:
-
-    store/<input>/<output>/
-
-`<input>` is the hash of everything that went into the node — the recipe, the system's fragments,
-the dependencies transitively, the probe output — and `<output>` is the digest of what came out.
-The path is the whole record: nothing is kept beside it, and a copy is checked by hashing what
-arrived and comparing it with the name of the directory it arrived in. A filesystem with no
-hardlinks (a share, a mount, a FAT volume) is assumed, so an entry travels as a plain copy of a
-directory.
+produced, at `store/<input>/`, with the digest of what came out recorded beside it as
+`<input> <output>`. A filesystem with no hardlinks (a share, a mount, a FAT volume) is assumed, so
+an entry travels as a plain copy of a directory.
 
 One input has one output, and that is enforced where it is cheap: publishing builds the entry
-beside its place, hashes it, removes whatever else is under that input, and moves the new one in.
-A source showing two outputs under one input is not a nest to take from — refused, and the node is
-built instead.
+beside its place, hashes the tree it just wrote, rewrites the line for that input and replaces the
+directory. A source whose entry does not hash to the output it records for that input — or that
+records two outputs under one input — is not a nest to take from: refused, and the node is built
+instead.
 
-Taking an entry is: copy the directory, hash it, compare with the name, put it under the same pair
-in our own store, write the state file that says "built" and point the name at it. That last step
-is what the present `cache pull` leaves out, which is why the build after a pull rebuilds the
-entry the pull just fetched. `[cache.NAME] url` names a nest: a directory, or an http(s) url
-serving one. Reading follows the declared order, the first nest that has the entry is the one
-used, a miss is the next, and no nest having it is a build. Names are the nest's own business — a
-hosted nest is its `store/`, and a reader needs nothing else from it.
+Taking an entry is: copy the directory, hash it, compare with the recorded output, put it at
+`store/<input>` in our own store, record the pair, write the state file that says "built" and point
+the name at it. That last step is what the present `cache pull` leaves out, which is why the build
+after a pull rebuilds the entry the pull just fetched. `[cache.NAME] url` names a nest: a
+directory, or an http(s) url serving one. Reading follows the declared order, the first nest that
+has the entry is the one used, a miss is the next, and no nest having it is a build. Names are the
+nest's own business — a hosted nest is its `store/`, and a reader needs nothing else from it.
 
 Probes need no case of their own: the input hash includes the probe output, so a machine whose
 probes differ computes a different name and simply does not find the entry.
 
 Two costs, taken deliberately: publishing hashes the tree it just wrote — the price of a mapping
 that cannot lie, and the reason a build that is not reproducible shows up at once as two outputs
-under one input — and a copy over plain http cannot be listed by a dumb server, so a share, a
-mount or rsync needs nothing while http needs the server's directory index or a list of paths
-beside the entry. `.retrolunar/entries` goes away with this: the pair in the path says the same
-thing, and the one-output rule takes the place of "this name once had a different content".
+recorded for one input — and a copy over plain http cannot be listed by a dumb server, so a share,
+a mount or rsync needs nothing while http needs the server's directory index or a list of paths
+beside the entry. `.retrolunar/entries` becomes the mapping itself rather than a record of what a
+pull happened to accept.
 
-Open: whether anything writable is still wanted. With entries being directories in a nest,
-publishing is a property of the nest (a share, a web root, an rsync destination) and not a
-command, so `push`, `push = true` and a nest remembering what it sent have nothing left to do.
-A place that accepts a build over the network is then only for what a shared filesystem does not
-cover — CI artifacts are the usual one — and that is a separate question. Plain http also costs
-one request per file where a share costs one copy.
+Open, and the one thing that decides the path: `store/<input>/<output>/` needs the output hash
+*before* the build, and that is exactly what cannot be had. What a package writes about itself —
+`zlib.pc`'s `prefix=`, a cmake config, a `-config` script — is the directory it will live in, so
+that path has to be known when the build runs: it is `store/<input>` and nothing else. An
+output-derived component in the path is only possible if entries stop recording absolute paths at
+all — `prefix=${pcfiledir}/../..` in every `.pc`, relative paths in the cmake files, no absolute
+self-reference anywhere — which is a project of its own and touches recipes. Until then the pair
+lives as a line in the nest's own bookkeeping (`<input> <output>`, which is what
+`.retrolunar/entries` already holds) and an entry stays at `store/<input>`.
+
+Decided: nothing writable. There is no `push` and no `push = true`; a cache is a source to take
+from, and publishing a nest is whatever makes its `store/` reachable — a share, a web root, an
+rsync destination.
 
 ## The four phases: what they came to
 
