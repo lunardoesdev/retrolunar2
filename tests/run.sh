@@ -355,5 +355,26 @@ echo "a changed recipe is a second entry, and the name points at it"
 grep -q 'in use' "$WORK/proj-gc.log" || { echo "gc said nothing useful:"; cat "$WORK/proj-gc.log"; exit 1; }
 echo "gc: $(tail -1 "$WORK/proj-gc.log" | sed 's/^retrolunar: //')"
 
+echo "=== the example the documentation walks through builds ==="
+# The tutorial's transcripts come from examples/mytool, and an example that stops
+# building is documentation that lies. It is copied out of the tree, pointed at this
+# tree the way a reader points it at theirs, and built with the built-in repository
+# left out: the two repositories the manifest names are all it gets.
+EX="$WORK/example"
+rm -rf "$EX" "$WORK/example-nest"
+cp -r "$root/examples/mytool" "$EX"
+rm -f "$EX/retrolunar.lock"
+sed -i "s|url = \"../../../retrolunar2-packages\"|url = \"$PACKAGES\"|" "$EX/retrolunar.toml"
+( cd "$EX" && "$RL" --nest "$WORK/example-nest" --no-default-repo build ) >"$WORK/example.log" 2>&1 ||
+    { echo "the documented example does not build:"; tail -8 "$WORK/example.log"; exit 1; }
+got=$("$WORK/example-nest/mytool@$native/bin/mytool")
+[ "$got" = "the answer is 42, from mylib" ] ||
+    { echo "the example's program answered '$got'"; exit 1; }
+( cd "$EX" && "$RL" --nest "$WORK/example-nest" --no-default-repo build ) >"$WORK/example2.log" 2>&1 ||
+    { echo "the example's second build failed:"; tail -8 "$WORK/example2.log"; exit 1; }
+grep -q "skip mytool@$native (fresh)" "$WORK/example2.log" ||
+    { echo "the example rebuilt although nothing changed:"; cat "$WORK/example2.log"; exit 1; }
+echo "the example builds, its program answers '$got', and a second build is fresh"
+
 echo
 echo "acceptance: ok (work in $WORK)"
