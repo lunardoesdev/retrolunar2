@@ -176,6 +176,9 @@ int cmd_cache(const options_t *o) {
     }
 
     char *nest = tree_nest(o->nest);
+    /* Entries are moved here, so this waits for the running builds in that nest. */
+    if (nest != NULL && nest_lock_exclusive(nest) < 0)
+        return 1;
     if (nest == NULL) {
         fputs("retrolunar: no nest directory (set HOME or pass --nest)\n", stderr);
         return 1;

@@ -39,6 +39,13 @@ int cmd_gc(const options_t *o) {
         fputs("retrolunar: no nest directory (set HOME or pass --nest)\n", stderr);
         return 1;
     }
+    /* The nest's lock, exclusively: a build holds it shared while it works, so this
+     * waits for running builds instead of removing an entry one of them is about to
+     * point a name at. */
+    if (nest_lock_exclusive(nest) < 0) {
+        free(nest);
+        return 1;
+    }
     char *store = path_join(nest, "store");
     if (!is_dir(store)) {
         printf("retrolunar: %s has no store; nothing to collect\n", nest);

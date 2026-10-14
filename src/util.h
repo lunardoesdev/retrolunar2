@@ -55,6 +55,11 @@ char *str_concat(const char *a, const char *b); /* no separator, malloc'd */
 char *join_sp(const strlist_t *l); /* "a b c", malloc'd; NULL list -> "" */
 char *path_join(const char *a, const char *b);
 char *path_abs(const char *p); /* NULL when p is unusable */
+/* The nest's lock, the one a generated script holds shared while it builds: a command
+ * that moves entries (gc, cache push and pull) takes it exclusively, so it never runs
+ * in the middle of a build. Returns a file descriptor to keep open, or -1. */
+int nest_lock_exclusive(const char *nestdir);
+
 int is_dir(const char *p);
 int is_file(const char *p);
 int is_symlink(const char *p);

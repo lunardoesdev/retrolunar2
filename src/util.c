@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -167,6 +169,28 @@ char *path_abs(const char *p) {
     free(abs);
     free(base);
     return out;
+}
+
+int nest_lock_exclusive(const char *nestdir) {
+    /* The lock file sits at the top of the nest, where the generated script opens it:
+     * $NESTDIR/.retrolunar.lock, one file per nest. */
+    char *lock = path_join(nestdir, ".retrolunar.lock");
+    int fd = open(lock, O_RDWR | O_CREAT, 0644);
+    if (fd < 0) {
+        fprintf(stderr, "retrolunar: cannot open %s\n", lock);
+        free(lock);
+        return -1;
+    }
+    free(lock);
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        /* A build is running: say so, then wait for it rather than racing it. */
+        fprintf(stderr, "retrolunar: waiting for the builds in %s to finish\n", nestdir);
+        if (flock(fd, LOCK_EX) != 0) {
+            close(fd);
+            return -1;
+        }
+    }
+    return fd;
 }
 
 int is_dir(const char *p) {
