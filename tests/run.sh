@@ -139,6 +139,7 @@ if grep -q "$NEST" "$zpc"; then
     exit 1
 fi
 zentry=$(readlink -f "$NEST/zlib@$native")
+lentry=$(readlink -f "$NEST/libpng@$native")
 zprefix=$(PKG_CONFIG_LIBDIR="$zentry/share/pkgconfig" pkg-config --variable=prefix zlib)
 [ -f "$zprefix/include/zlib.h" ] ||
     { echo "zlib's .pc points at nothing: $zprefix" >&2; exit 1; }
@@ -148,8 +149,19 @@ moved=$(PKG_CONFIG_LIBDIR="$WORK/moved/store/$(basename "$zentry")/share/pkgconf
         pkg-config --variable=prefix zlib)
 [ -f "$moved/include/zlib.h" ] ||
     { echo "after the move, zlib's .pc points at nothing: $moved" >&2; exit 1; }
+# And a program has to find its own entry's libraries afterwards, not the host's: a program
+# is installed into bin/ and its libraries into lib/, so $ORIGIN alone is the bin directory,
+# where the loader finds nothing and silently takes a library of the same soname from the
+# host — the case that hid here was our libpng 1.6.48 replaced by the system's 1.6.58.
+resolved=$(ldd "$WORK/moved/store/$(basename "$lentry")/bin/pngfix" 2>/dev/null |
+           sed -n 's/.*libpng16\.so\.16 => \([^ ]*\).*/\1/p')
+case "$resolved" in
+    "$WORK/moved/store/"*) ;;
+    *) echo "after the move, pngfix takes libpng16 from ${resolved:-nowhere}" >&2; exit 1 ;;
+esac
 mv "$WORK/moved" "$NEST"
 echo "zlib's .pc answered $zprefix, and $moved after the whole nest moved away"
+echo "and pngfix found $resolved"
 # And the pass says what it could not relax: a path compiled into a binary stays.
 grep -q 'still name the entry by path' "$WORK/build.log" ||
     { echo "the relax pass reported nothing it could not do" >&2; exit 1; }

@@ -1302,31 +1302,38 @@ def port_system(src_dir, dst_root, native_name, uses_path=None):
         script = tpl["script"].rstrip("\n")
         if _host_os(buckets) != "mingw32":
             # Every ELF link gets an $ORIGIN runtime path, in the spelling its own
-            # toolchain needs. make (and so autoconf, and libtool under it) reads
-            # `$ORIGIN` as `$O` + `RIGIN`, so it needs `$$` and the shell-level
-            # single quotes; cmake and meson hand the value to the compiler
+            # toolchain needs, and one that reaches the libraries it was built against:
+            # a program is installed into bin/ and the libraries into lib/ (or lib64/),
+            # so $ORIGIN alone is the bin directory, where there is nothing to find, and
+            # the loader then takes a library of the same soname from the host —
+            # silently, and the wrong version of it. make (and so autoconf, and libtool
+            # under it) reads `$ORIGIN` as `$O` + `RIGIN`, so it needs `$$` and the
+            # shell-level single quotes; cmake and meson hand the value to the compiler
             # directly, so the plain backslash-escaped form is what they want.
-            flag_make = "-Wl,-rpath,'\\$\\$ORIGIN'"
-            flag_plain = "-Wl,-rpath,\\$ORIGIN"
+            make_paths = " ".join("-Wl,-rpath,'\\$\\$ORIGIN%s'" % suffix
+                                  for suffix in ("", "/../lib", "/../lib64"))
+            plain_paths = " ".join("-Wl,-rpath,\\$ORIGIN%s" % suffix
+                                   for suffix in ("", "/../lib", "/../lib64"))
             if bs in ("autoconf", "make"):
-                script_extra = 'LDFLAGS="$LDFLAGS ' + flag_make + '"\n'
+                script_extra = 'LDFLAGS="$LDFLAGS ' + make_paths + '"\n'
             elif bs in ("cmake", "meson"):
-                script_extra = 'LDFLAGS="$LDFLAGS ' + flag_plain + '"\n'
+                script_extra = 'LDFLAGS="$LDFLAGS ' + plain_paths + '"\n'
             else:
                 script_extra = ''
             if script_extra:
                 script_extra = script_extra.replace('\\n', chr(10))
                 script = script_extra + script
-                REPORT.add(f"system@{name}/{bs}.toml", "links with $ORIGIN",
+                REPORT.add(f"system@{name}/{bs}.toml", "links with $ORIGIN and its lib",
                            "so an exported bundle of it is a copy")
         if bs == "cargo" and _host_os(buckets) != "mingw32":
             # Cargo reads no $LDFLAGS, so a binary it builds would carry no
             # runtime path and a bundle of it would need the launcher. The flag
             # lives in the system's own copy of the driver, because a PE link
             # has no $ORIGIN to speak of.
-            script = 'RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-rpath,\\$ORIGIN"\n' \
-                     'export RUSTFLAGS\n' + script
-            REPORT.add(f"system@{name}/cargo.toml", "rustc links with $ORIGIN",
+            script = ('RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-rpath,\\$ORIGIN '
+                      '-C link-arg=-Wl,-rpath,\\$ORIGIN/../lib '
+                      '-C link-arg=-Wl,-rpath,\\$ORIGIN/../lib64"\nexport RUSTFLAGS\n' + script)
+            REPORT.add(f"system@{name}/cargo.toml", "rustc links with $ORIGIN and its lib",
                        "cargo does not read $LDFLAGS")
         parts.append('script = """')
         parts.append(toml_esc(script))
