@@ -33,7 +33,6 @@ typedef struct {
     int no_default_repo;  /* --no-default-repo */
     int cores;            /* --cores N, defaults to 1 */
     int execute;          /* -x */
-    int strict;           /* --strict, export only */
     int rpath;            /* 0 when --no-rpath was given */
     int help;             /* -h/--help anywhere */
     int version;          /* --version */

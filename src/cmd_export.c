@@ -7,9 +7,8 @@
  * whole thing is recursive: a library's own libraries are collected too.
  *
  * Anything that cannot be found is classified rather than ignored: what the
- * platform or the toolchain provides is fine to leave out, anything else is
- * reported, and --strict turns that into a failure. An export that is quietly
- * broken is worse than one that refuses. */
+ * platform or the toolchain provides is fine to leave out, anything else is a
+ * failure. An export that is quietly broken is worse than one that refuses. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

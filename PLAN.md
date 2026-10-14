@@ -193,7 +193,7 @@ sha256 implemented in-repo, no libcrypto.
   symlink chains come along, dedupe. Parsed by the tool itself, so no binutils is required.
   Unresolved names are classified: present in nestdir → copied; provided by the platform or
   toolchain (bionic `libc`/`libm`/`libdl`, Windows API, `libgcc_s*`) → ignored; anything
-  else → listed, and only `--strict` makes it an error. ELF bundles get an `$ORIGIN` rpath
+  else → an error. ELF bundles get an `$ORIGIN` rpath
   so they find their own libraries (`--no-rpath` turns it off).
 
 ## The package block (the P2 contract)

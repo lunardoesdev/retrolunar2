@@ -114,10 +114,6 @@ int cli_parse(int argc, char **argv, options_t *o) {
             o->execute = 1;
             continue;
         }
-        if (strcmp(a, "--strict") == 0) { /* the only behaviour there is */
-            o->strict = 1;
-            continue;
-        }
         if (strcmp(a, "--no-rpath") == 0) {
             o->rpath = 0;
             continue;
@@ -197,7 +193,6 @@ void cli_usage(FILE *out, const char *prog) {
             "            the last @ separates a revision. Repositories are searched in\n"
             "            the order they are declared, the built-in `default` last.\n"
             "  --no-default-repo     do not search the built-in repository\n"
-            "  --strict         export: treat an unresolved library as an error\n"
             "  --no-rpath       export: do not bake an $ORIGIN rpath into ELF files\n"
             "  -h, --help       show this help and exit\n"
             "\n"
