@@ -143,10 +143,30 @@ char *path_abs(const char *p) {
         return rp;
     if (p[0] == '/')
         return xstrdup(p);
-    char cwd[PATH_MAX];
-    if (getcwd(cwd, sizeof cwd) == NULL)
+    /* The path need not exist yet, so realpath cannot answer for it: what has to
+     * be resolved is the parent, and the last component appended to that. Without
+     * this a message says `/tmp/pj/./dist`, because joining is all that is left. */
+    char *dir = xstrdup(p);
+    char *slash = strrchr(dir, '/');
+    char *base;
+    if (slash != NULL) {
+        *slash = '\0';
+        base = xstrdup(slash + 1);
+    } else {
+        base = xstrdup(dir);
+        free(dir);
+        dir = xstrdup(".");
+    }
+    char *abs = path_abs(dir);
+    free(dir);
+    if (abs == NULL) {
+        free(base);
         return NULL;
-    return path_join(cwd, p);
+    }
+    char *out = path_join(abs, base);
+    free(abs);
+    free(base);
+    return out;
 }
 
 int is_dir(const char *p) {
