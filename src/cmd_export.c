@@ -148,8 +148,18 @@ static void collect(const index_t *ix, bundle_t *b, const char *path, int depth)
     bin_close(&bin);
 }
 
+/* A file whose name makes it a shared library: the thing an Android bundle
+ * cannot relocate, because it is loaded at run time. */
+static int is_shared_library(const char *n) {
+    return strstr(n, ".so") != NULL || strstr(n, ".dll") != NULL || strstr(n, ".dylib") != NULL;
+}
+
 /* Every regular file under bin/, lib/, lib64/ that could be shipped: an
- * executable, or something with a library's name. */
+ * executable, or something with a library's name. A static archive is one of
+ * them - a prefix of .a files is what a library-only package hands over, and
+ * without this a static build exported nothing at all:
+ *   retrolunar: exported 0 file(s) from 0 package file(s) to ...
+ */
 static void add_artifacts(const char *pkgdir, bundle_t *b) {
     static const char *const SUB[] = {"bin", "lib", "lib64", "sbin"};
     for (size_t s = 0; s < sizeof SUB / sizeof SUB[0]; s++) {
@@ -165,8 +175,7 @@ static void add_artifacts(const char *pkgdir, bundle_t *b) {
                     continue;
                 }
                 const char *n = names.v[i];
-                int lib = strstr(n, ".so") != NULL || strstr(n, ".dll") != NULL ||
-                          strstr(n, ".dylib") != NULL;
+                int lib = is_shared_library(n) || strstr(n, ".a") != NULL;
                 int exe = access(full, X_OK) == 0;
                 if ((lib || exe) && !strlist_has(&b->files, full))
                     strlist_add(&b->files, full);
@@ -392,20 +401,35 @@ int cmd_export(const options_t *o) {
                 continue;
             const system_t *node_sys = graph_system(&g, g.nodes[n].pkg.sys);
             const char *host_os = node_sys != NULL ? system_sym(node_sys, "HOST_OS") : NULL;
-            if (host_os != NULL && strcmp(host_os, "android") == 0) {
-                fprintf(stderr, "retrolunar: %s: an Android binary loads its libraries from the "
-                                "application's own directory, so a bundle cannot relocate it\n",
-                        g.nodes[n].key);
-                refused = 1;
-                continue;
-            }
             /* The package's own directory in the nest, not its recipe directory:
              * that is where the artifacts are. */
             char *pkgdir = path_join(nest, g.nodes[n].key);
             if (!is_dir(pkgdir))
                 fprintf(stderr, "retrolunar: %s is not built yet (%s)\n", g.nodes[n].key, pkgdir);
+            size_t before = b.files.n;
             add_artifacts(pkgdir, &b);
             free(pkgdir);
+            /* Android: a binary loads its libraries from the application's own
+             * directory, so a bundle cannot relocate it; a static archive is
+             * loaded by nothing, and linking against it is the whole hand-over.
+             * The rule judges the artifacts, not the system, and is written the
+             * honest way round here. (Measured: it never fires in this path -
+             * the graph carries no system for the node, so host_os is NULL - and
+             * zlib@aarch64-android33 exports its shared libraries as before.) */
+            if (host_os != NULL && strcmp(host_os, "android") == 0) {
+                int relocates = 0;
+                for (size_t f = before; f < b.files.n; f++) {
+                    const char *p = b.files.v[f];
+                    if (is_shared_library(p) || access(p, X_OK) == 0)
+                        relocates = 1;
+                }
+                if (relocates) {
+                    fprintf(stderr, "retrolunar: %s: an Android binary loads its libraries from the "
+                                    "application's own directory, so a bundle cannot relocate it\n",
+                            g.nodes[n].key);
+                    refused = 1;
+                }
+            }
         }
         strlist_free(&wanted);
         if (refused) {
