@@ -122,19 +122,37 @@ start=$(date +%s)
 echo "rerun: $(( $(date +%s) - start ))s, skipped $(grep -c '(fresh)' "$WORK/again.log") nodes"
 grep -q 'skip .* (fresh)' "$WORK/again.log" || { echo "nothing was skipped: freshness is broken" >&2; exit 1; }
 
-echo "=== an entry describes where it is ==="
-# What a package records about itself is what a consumer reads, so a .pc file's prefix
-# has to be the directory the entry really lives in — not the staging tree the build
-# wrote through on its way there. DESTDIR is what redirects the write.
+echo "=== an entry names itself, and can be moved ==="
+# What a package records about itself is what a consumer reads, so it has to be the
+# directory the entry really lives in — and to survive the entry moving, it is written
+# relative to the file that says it (pkg-config's ${pcfiledir}). A path baked at build
+# time points at a staging tree that is gone, or at a nest that has moved away.
 command -v pkg-config >/dev/null ||
     { echo "pkg-config is not here, so this check cannot run" >&2; exit 1; }
-zprefix=$(PKG_CONFIG_LIBDIR="$NEST/zlib@$native/share/pkgconfig" pkg-config --variable=prefix zlib)
-case "$zprefix" in
-    "$NEST"/tmp/*) echo "zlib's .pc records the staging path: $zprefix" >&2; exit 1 ;;
-esac
+zpc=$NEST/zlib@$native/share/pkgconfig/zlib.pc
+if ! grep -q 'pcfiledir' "$zpc"; then
+    echo "zlib's .pc does not name itself: $(grep '^prefix=' "$zpc")" >&2
+    exit 1
+fi
+if grep -q "$NEST" "$zpc"; then
+    echo "zlib's .pc still records the path it was built at: $(grep '^prefix=' "$zpc")" >&2
+    exit 1
+fi
+zentry=$(readlink -f "$NEST/zlib@$native")
+zprefix=$(PKG_CONFIG_LIBDIR="$zentry/share/pkgconfig" pkg-config --variable=prefix zlib)
 [ -f "$zprefix/include/zlib.h" ] ||
-    { echo "zlib's .pc records a directory that is not there: $zprefix" >&2; exit 1; }
-echo "zlib's .pc says it is in $zprefix"
+    { echo "zlib's .pc points at nothing: $zprefix" >&2; exit 1; }
+# The move is the proof: the same file, somewhere else, answering the same question.
+mv "$NEST" "$WORK/moved"
+moved=$(PKG_CONFIG_LIBDIR="$WORK/moved/store/$(basename "$zentry")/share/pkgconfig" \
+        pkg-config --variable=prefix zlib)
+[ -f "$moved/include/zlib.h" ] ||
+    { echo "after the move, zlib's .pc points at nothing: $moved" >&2; exit 1; }
+mv "$WORK/moved" "$NEST"
+echo "zlib's .pc answered $zprefix, and $moved after the whole nest moved away"
+# And the pass says what it could not relax: a path compiled into a binary stays.
+grep -q 'still name the entry by path' "$WORK/build.log" ||
+    { echo "the relax pass reported nothing it could not do" >&2; exit 1; }
 
 echo "=== export, and the program it produces ==="
 "$RL" env --packages "$PACKAGES" --nest "$NEST" "$CHAIN" >"$WORK/env.sh"
