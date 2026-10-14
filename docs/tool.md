@@ -198,6 +198,32 @@ retrolunar: NESTDIR is on a tmpfs: /tmp/nest (2.1G free of 2.9G)
 retrolunar:   a long build can exhaust it; put the nest on disk with --nest DIR
 ```
 
+## Several builds, one nest
+
+What builds share is the store, and an entry is named by the content of its input — so two
+builds of *different* nodes have nothing to fight over, and the nest takes them both at
+once. What needs care is the same node twice, and `nestdir/.retrolunar/locks/<node>.lock`
+is where that is settled: a node's block takes its own lock before it decides anything, a
+second build of that node waits there, and when the first one publishes, the second finds
+the node fresh and skips it. Two overlapping invocations of one target therefore cost one
+build, not two.
+
+```
+$ retrolunar --nest /tmp/nest generate -x 'libpng@clang-native' &   # builds zlib, then libpng
+$ retrolunar --nest /tmp/nest generate -x 'zlib@clang-native'       # waits, then: skip zlib@clang-native (fresh)
+```
+
+The nest lock (`nestdir/.retrolunar.lock`) is held *shared* by every build for its whole
+run and *exclusively* by the commands that move entries — `gc`, `cache push`, `cache pull` —
+so those wait for the builds to finish rather than removing an entry one of them is about
+to point a name at:
+
+```
+$ retrolunar --nest /tmp/nest gc
+retrolunar: waiting for the builds in /tmp/nest to finish
+retrolunar: 0 entries removed, 4 in use
+```
+
 A name is a convenience, never an input: nothing in a build reads `zlib@clang-native`, so
 replacing an entry or pruning one cannot break another package's reproducibility. `gc`
 removes what no name points at.

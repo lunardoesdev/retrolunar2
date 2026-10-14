@@ -230,6 +230,15 @@ its own variables, linking `RIGIN` into the library alongside the correct path. 
 acceptance asks every ELF we ship for its runtime path now: one `$ORIGIN`, no mangled
 fragment, no staging directory, or the run stops.
 
+Concurrency is per node, not per nest. The nest lock is held *shared* by every build for its
+whole run and *exclusively* by the commands that move entries (`gc`, `cache push`, `cache
+pull`), so several builds share one nest — what they share is the store, and an entry is
+named by the content of its input — while those commands wait rather than removing an entry
+a build is about to point a name at. A node's own lock,
+`nestdir/.retrolunar/locks/<node>.lock`, is taken before the block decides anything: a second
+build of that node waits there and then finds it fresh, so two overlapping invocations of one
+target cost one build instead of two.
+
 ## Work order
 
 - **P0** scaffolding: meson project, vendored tomlc17 plus a typed TOML reader of our own
