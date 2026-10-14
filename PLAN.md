@@ -220,6 +220,16 @@ The emitter then appends the system's own variables, so a fragment can extend wh
 closure produced: `CPPFLAGS = "$CPPFLAGS -isystem $SYSROOT/usr/include"` works because the
 closure's value is already in the environment by then.
 
+A block's environment is its own. One generated script builds every node in one process, so
+what a block exports is still set when the next one starts; each block therefore begins by
+restoring the values the caller had, before the closure and the system extend them. Without
+that, one node's build flags became the next node's: an `$ORIGIN` runtime path spelled for
+cmake (`-Wl,-rpath,$ORIGIN`, which the shell has already expanded once) reached a
+make-based package — where the spelling has to be `$$ORIGIN` — and make read `$O` as one of
+its own variables, linking `RIGIN` into the library alongside the correct path. The
+acceptance asks every ELF we ship for its runtime path now: one `$ORIGIN`, no mangled
+fragment, no staging directory, or the run stops.
+
 ## Work order
 
 - **P0** scaffolding: meson project, vendored tomlc17 plus a typed TOML reader of our own
