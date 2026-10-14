@@ -247,6 +247,32 @@ out of `nestdir/libpng@clang-native`.
 - Array handling when peer TOML files merge (assumption: replace, not append).
 - Whether `env` needs a `--json` form.
 
+## Caches: what is agreed
+
+A cache is named, and only named: `[cache.NAME] url = ...`, a directory or an http(s) one. The
+single-key `[cache] url` form goes away; a project that has one says the same thing in one more
+line, and every cache has a name to point at when a command wants one cache and not the others.
+
+`push = true` marks a cache as writable, and nothing else is ever written to: a url is not a
+destination because it was named, and the default is off everywhere, a local directory included.
+
+A build fills it. The step belongs in the emitted script, in a node's block, right after
+publishing: the entry's name is the fingerprint the tool has already computed, so "send this" is
+a short tail per node — and the script stays a script, so running it by hand, which is the point
+of the whole thing, fills the cache too. A nest remembers what it has sent, in
+`<nest>/.retrolunar/sent`, so a rerun sends nothing and asks the network nothing; `cache push`
+stays for what was built earlier, and for saying "again, and check".
+
+Reading follows the order the manifest declares, as repositories do: the first cache that has
+the entry is the one used, a miss is the next, and no cache having it is a build. `cache pull`
+stays as the way to ask before a build; a build asking by itself is the other half of this and is
+not built yet.
+
+Open, and small either way: what a directory cache holds. An entry archive, which is what a url
+cache holds — one shape everywhere, and gzip on every build — or the entry directory itself,
+hardlinked, so a local cache costs a link where a remote one costs a transfer. Only a url cache
+needs the archive in that case, and the digest it publishes.
+
 ## The four phases: what they came to
 
 Each phase ended with the acceptance green, and the acceptance covers each of
@@ -297,14 +323,7 @@ them: a project of its own, a second version of a package keeping its own entry,
   after `cache pull zlib@clang-native` into an empty nest, the next `generate -x` downloads the
   source and builds the entry the pull had just verified, because `cache pull` writes the name
   and the entries index and never the state file that says "built", and publishing replaces the
-  store directory it finds. A transparent pull is the tool asking the cache "is this entry
-  here?" for each node before it emits that node's block: the fingerprint is computed anyway to
-  name the entry, so the question costs one file test or one `GET <entry>.sha256` per node, and
-  a miss is simply a build. Two things have to be settled with it: probes (a system that has
-  them runs its setup to answer, so a hit is only known after that) and whether an unreachable
-  cache is a miss or an error. It also puts the cache in the default path of every build, which
-  is a reason to keep it opt-in and to say plainly that the digest catches a corrupted transfer,
-  not a hostile cache.
+  store directory it finds. See "Caches: what is agreed" for what a cache is meant to become.
 - Nothing is signed. An entry is checked against the digest published beside it,
   which catches a corrupted transfer, not a hostile cache.
 - Tokens for a private repository are the environment's: git reads them, nothing
