@@ -322,6 +322,14 @@ says about itself. That is what a store on a flash drive needs, and it is the gr
 `store/<input>/<output>/` stands on: the .la and `-config` classes have to be relaxed too, and
 then the pair of hashes is worth its place in the path.
 
+The runtime path of what we link is the same question. `$ORIGIN` is the directory the file sits
+in: `lib/` for a library, which is where its siblings are, and `bin/` for a program, which holds
+no libraries at all — so a program linked against a library of its own entry took the *host's*
+copy of the same soname instead, silently and in the wrong version (measured: `pngfix` loaded the
+system's libpng 1.6.58 after the entry moved, not our 1.6.48). Every ELF link now states
+`$ORIGIN`, `$ORIGIN/../lib` and `$ORIGIN/../lib64`, in the spelling its own toolchain needs, and
+the acceptance moves the nest and asks `ldd` which library a program took.
+
 ## The four phases: what they came to
 
 Each phase ended with the acceptance green, and the acceptance covers each of
