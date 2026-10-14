@@ -154,13 +154,21 @@ static int is_shared_library(const char *n) {
     return strstr(n, ".so") != NULL || strstr(n, ".dll") != NULL || strstr(n, ".dylib") != NULL;
 }
 
-/* Every regular file under bin/, lib/, lib64/ that could be shipped: an
- * executable, or something with a library's name. A static archive is one of
- * them - a prefix of .a files is what a library-only package hands over, and
- * without this a static build exported nothing at all:
+/* A static archive's name ends in .a - and it has to be the end: libtool's
+ * libtool archives (liblzma.la) contain .a a character in, and .la files are
+ * build metadata that has no place in a hand-over. */
+static int is_static_archive(const char *n) {
+    size_t l = strlen(n);
+    return l > 2 && strcmp(n + l - 2, ".a") == 0;
+}
+
+/* Every regular file under bin/, lib/, lib64/ that could be shipped: a library
+ * (shared or static), or - for a target that was named, not for its
+ * dependencies - a program. A prefix of .a files is what a library-only package
+ * hands over, and without the static case a static build exported nothing:
  *   retrolunar: exported 0 file(s) from 0 package file(s) to ...
  */
-static void add_artifacts(const char *pkgdir, bundle_t *b) {
+static void add_artifacts(const char *pkgdir, bundle_t *b, int with_programs) {
     static const char *const SUB[] = {"bin", "lib", "lib64", "sbin"};
     for (size_t s = 0; s < sizeof SUB / sizeof SUB[0]; s++) {
         char *dir = path_join(pkgdir, SUB[s]);
@@ -175,8 +183,8 @@ static void add_artifacts(const char *pkgdir, bundle_t *b) {
                     continue;
                 }
                 const char *n = names.v[i];
-                int lib = is_shared_library(n) || strstr(n, ".a") != NULL;
-                int exe = access(full, X_OK) == 0;
+                int lib = is_shared_library(n) || is_static_archive(n);
+                int exe = with_programs && access(full, X_OK) == 0;
                 if ((lib || exe) && !strlist_has(&b->files, full))
                     strlist_add(&b->files, full);
                 free(full);
@@ -397,8 +405,11 @@ int cmd_export(const options_t *o) {
         }
         int refused = 0;
         for (size_t n = 0; n < g.n; n++) {
-            if (!strlist_has(&wanted, g.nodes[n].key))
+            /* A source node is somebody's tarball, not artifacts: it has no lib/
+             * of ours to hand over. */
+            if (strcmp(g.nodes[n].pkg.sys, "source") == 0)
                 continue;
+            int named = strlist_has(&wanted, g.nodes[n].key);
             const system_t *node_sys = graph_system(&g, g.nodes[n].pkg.sys);
             const char *host_os = node_sys != NULL ? system_sym(node_sys, "HOST_OS") : NULL;
             /* The package's own directory in the nest, not its recipe directory:
@@ -407,16 +418,19 @@ int cmd_export(const options_t *o) {
             if (!is_dir(pkgdir))
                 fprintf(stderr, "retrolunar: %s is not built yet (%s)\n", g.nodes[n].key, pkgdir);
             size_t before = b.files.n;
-            add_artifacts(pkgdir, &b);
+            /* A named target hands over its programs too; a dependency is here
+             * for the link, so its libraries are what comes along. */
+            add_artifacts(pkgdir, &b, named);
             free(pkgdir);
             /* Android: a binary loads its libraries from the application's own
              * directory, so a bundle cannot relocate it; a static archive is
              * loaded by nothing, and linking against it is the whole hand-over.
-             * The rule judges the artifacts, not the system, and is written the
-             * honest way round here. (Measured: it never fires in this path -
-             * the graph carries no system for the node, so host_os is NULL - and
-             * zlib@aarch64-android33 exports its shared libraries as before.) */
-            if (host_os != NULL && strcmp(host_os, "android") == 0) {
+             * The rule judges the artifacts, not the system, and it is asked
+             * only of a target that was named: a dependency's libraries come
+             * along for the link, not as a program to run. (Measured: it never
+             * fires in this path - the graph carries no system for the node, so
+             * host_os is NULL - and a shared target exports as before.) */
+            if (named && host_os != NULL && strcmp(host_os, "android") == 0) {
                 int relocates = 0;
                 for (size_t f = before; f < b.files.n; f++) {
                     const char *p = b.files.v[f];

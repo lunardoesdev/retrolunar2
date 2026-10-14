@@ -23,7 +23,7 @@ A target is `pack` or `pack@sys`. A bare name uses the compile-time default syst
 | `build` | the package this directory is: into the nest, or into `--out DIR` |
 | `gc` | remove store entries nothing points at |
 | `cache push\|pull TARGET...` | send built packages to a cache, or take them from it |
-| `export --to DIR <target>` | a flat bundle of the target, its libraries and what they load |
+| `export --to DIR <target>` | a flat bundle of the target, its libraries and what they load, plus the libraries of everything it depends on |
 
 ### deps
 
