@@ -334,26 +334,33 @@ static int bake_rpath(const char *path, int enabled) {
 /* --- the command -------------------------------------------------------- */
 
 int cmd_export(const options_t *o) {
+    /* A project in this directory is a package, registered before anything
+     * resolves, so a target that names it lands on the project and not on a tree
+     * of the same name. */
+    manifest_t here;
+    int have_manifest = manifest_find(NULL, &here) == 0;
+    if (have_manifest)
+        resolve_set_local(here.file, here.name);
+
     if (o->args.n < 1) {
-        /* Pointed at a project, a retrolunar.toml names the packages it hands
-         * over; with neither a target nor a manifest there is nothing to ship. */
-        manifest_t m;
-        if (manifest_find(NULL, &m) == 0) {
-            int rc = 1;
-            if (m.deps.n > 0) {
-                options_t sub = *o;
-                sub.args = m.deps;
-                rc = cmd_export(&sub);
-            } else {
-                fprintf(stderr, "retrolunar: %s declares no deps, so there is nothing to ship\n",
-                        m.file);
-            }
-            manifest_free(&m);
-            return rc;
+        /* Pointed at a project, the manifest is the package: that is what is
+         * shipped, and its deps come along the way they do for any package. */
+        if (!have_manifest) {
+            fputs("retrolunar: export wants a <pack[@sys]> or a file path\n", stderr);
+            return 1;
         }
-        fputs("retrolunar: export wants a <pack[@sys]> or a file path\n", stderr);
-        return 1;
+        char *self = xmalloc(strlen(here.name) + 64);
+        sprintf(self, "%s@%s", here.name, RETROLUNAR_DEFAULT_SYSTEM);
+        options_t sub = *o;
+        strlist_init(&sub.args);
+        strlist_add_own(&sub.args, self);
+        int rc = cmd_export(&sub);
+        strlist_free(&sub.args);
+        manifest_free(&here);
+        return rc;
     }
+    if (have_manifest)
+        manifest_free(&here);
     if (o->args.n > 1 && (strchr(o->args.v[0], '/') != NULL || is_file(o->args.v[0]))) {
         fputs("retrolunar: a file path is exported on its own\n", stderr);
         return 1;

@@ -223,34 +223,30 @@ done:
 }
 
 int cmd_export_tarball(const options_t *o) {
-    /* A project's retrolunar.toml names its own packages: pointed at a project,
-     * the command releases what the project says it hands over. */
+    /* A project in this directory is a package. Registering it before anything
+     * resolves is what makes a target naming it land on the project rather than
+     * on the tree - and with no target at all, the project itself is what gets
+     * released, its deps riding along as they do for any package. */
     strlist_t from_manifest;
     strlist_init(&from_manifest);
+    manifest_t here;
+    const char *manifest_dir = (o->args.n == 1 && is_dir(o->args.v[0])) ? o->args.v[0] : NULL;
+    int have_manifest = manifest_find(manifest_dir, &here) == 0;
+    if (have_manifest) {
+        resolve_set_local(here.file, here.name);
+        if (o->args.n == 0) {
+            char *self = xmalloc(strlen(here.name) + 64);
+            sprintf(self, "%s@%s", here.name, RETROLUNAR_DEFAULT_SYSTEM);
+            strlist_add_own(&from_manifest, self);
+        }
+        manifest_free(&here);
+    }
     int have_targets = o->args.n > 0;
-    if (have_targets && o->args.n == 1 &&
-        (strstr(o->args.v[0], "retrolunar.toml") != NULL || strcmp(o->args.v[0], ".") == 0))
-        have_targets = 0;
-    if (!have_targets) {
-        manifest_t m;
-        const char *dir = o->args.n == 1 ? o->args.v[0] : NULL;
-        if (manifest_find(dir, &m) != 0) {
-            fputs("retrolunar: export-tarball wants <pack[@sys]>..., or a directory "
-                  "with a retrolunar.toml\n", stderr);
-            strlist_free(&from_manifest);
-            return 1;
-        }
-        for (size_t i = 0; i < m.deps.n; i++)
-            strlist_add(&from_manifest, m.deps.v[i]);
-        if (m.deps.n == 0)
-            fprintf(stderr,
-                    "retrolunar: %s declares no deps, so there is nothing to release\n",
-                    m.file);
-        manifest_free(&m);
-        if (from_manifest.n == 0) {
-            strlist_free(&from_manifest);
-            return 1;
-        }
+    if (!have_targets && from_manifest.n == 0) {
+        fputs("retrolunar: export-tarball wants <pack[@sys]>..., or a project with a "
+              "retrolunar.toml\n", stderr);
+        strlist_free(&from_manifest);
+        return 1;
     }
     const char *const *targets = have_targets ? (const char *const *)o->args.v
                                               : (const char *const *)from_manifest.v;
