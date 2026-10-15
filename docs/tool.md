@@ -173,6 +173,15 @@ runtime path is rewritten to match the flat layout, and anything unresolved is l
 --no-rpath       export: do not bake an $ORIGIN rpath into ELF files
 ```
 
+A project is a package too. `retrolunar.toml` in a directory is its recipe, its
+`deps` are what the project hands over, so
+
+    retrolunar export-tarball --to dist
+    retrolunar export --to bundle
+
+run in that directory release and ship them; naming the directory, or the file,
+does the same from anywhere.
+
 The default tree is cloned once into `$HOME/.cache/retrolunar/packages`, and the default
 nest is `$HOME/.cache/retrolunar/nestdir`, so a bare `retrolunar generate -x zlib` works
 with no options at all.

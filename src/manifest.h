@@ -36,6 +36,7 @@ typedef struct {
     char *dir;        /* the directory holding retrolunar.toml */
     char *file;       /* .../retrolunar.toml */
     char *name;       /* the package's name: the directory's */
+    strlist_t deps;   /* the package's own deps: what a release hands over */
     strlist_t shell_deps; /* [shell] deps, empty when there is no such table */
     repolist_t repos;     /* [repo.*], in the order the file declares them */
     char *cache_url;      /* [cache] url: where built packages are kept */

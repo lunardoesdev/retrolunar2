@@ -17,6 +17,7 @@
 
 #include "bin.h"
 #include "cmds.h"
+#include "manifest.h"
 #include "resolve.h"
 #include "tree.h"
 
@@ -334,6 +335,22 @@ static int bake_rpath(const char *path, int enabled) {
 
 int cmd_export(const options_t *o) {
     if (o->args.n < 1) {
+        /* Pointed at a project, a retrolunar.toml names the packages it hands
+         * over; with neither a target nor a manifest there is nothing to ship. */
+        manifest_t m;
+        if (manifest_find(NULL, &m) == 0) {
+            int rc = 1;
+            if (m.deps.n > 0) {
+                options_t sub = *o;
+                sub.args = m.deps;
+                rc = cmd_export(&sub);
+            } else {
+                fprintf(stderr, "retrolunar: %s declares no deps, so there is nothing to ship\n",
+                        m.file);
+            }
+            manifest_free(&m);
+            return rc;
+        }
         fputs("retrolunar: export wants a <pack[@sys]> or a file path\n", stderr);
         return 1;
     }

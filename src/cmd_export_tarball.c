@@ -25,6 +25,7 @@
 #include "cmds.h"
 #include "config.h"
 #include "hash.h"
+#include "manifest.h"
 #include "repos.h"
 #include "resolve.h"
 #include "tree.h"
@@ -222,10 +223,38 @@ done:
 }
 
 int cmd_export_tarball(const options_t *o) {
-    if (o->args.n < 1) {
-        fputs("retrolunar: export-tarball wants a <pack[@sys]> to release\n", stderr);
-        return 1;
+    /* A project's retrolunar.toml names its own packages: pointed at a project,
+     * the command releases what the project says it hands over. */
+    strlist_t from_manifest;
+    strlist_init(&from_manifest);
+    int have_targets = o->args.n > 0;
+    if (have_targets && o->args.n == 1 &&
+        (strstr(o->args.v[0], "retrolunar.toml") != NULL || strcmp(o->args.v[0], ".") == 0))
+        have_targets = 0;
+    if (!have_targets) {
+        manifest_t m;
+        const char *dir = o->args.n == 1 ? o->args.v[0] : NULL;
+        if (manifest_find(dir, &m) != 0) {
+            fputs("retrolunar: export-tarball wants <pack[@sys]>..., or a directory "
+                  "with a retrolunar.toml\n", stderr);
+            strlist_free(&from_manifest);
+            return 1;
+        }
+        for (size_t i = 0; i < m.deps.n; i++)
+            strlist_add(&from_manifest, m.deps.v[i]);
+        if (m.deps.n == 0)
+            fprintf(stderr,
+                    "retrolunar: %s declares no deps, so there is nothing to release\n",
+                    m.file);
+        manifest_free(&m);
+        if (from_manifest.n == 0) {
+            strlist_free(&from_manifest);
+            return 1;
+        }
     }
+    const char *const *targets = have_targets ? (const char *const *)o->args.v
+                                              : (const char *const *)from_manifest.v;
+    size_t ntargets = have_targets ? o->args.n : from_manifest.n;
     char *to = xstrdup(o->to != NULL ? o->to : "dist");
     const char *base = strrchr(to, '/');
     base = base != NULL ? base + 1 : to;
@@ -234,7 +263,7 @@ int cmd_export_tarball(const options_t *o) {
      * Anything else - an existing directory, a bare word, a trailing slash - is
      * a directory to pack into. */
     int file_mode = o->to != NULL && !is_dir(to) && strchr(base, '.') != NULL;
-    if (file_mode && o->args.n != 1) {
+    if (file_mode && ntargets != 1) {
         fprintf(stderr, "retrolunar: --to %s names one archive, so it takes one target\n", to);
         free(to);
         return 1;
@@ -263,7 +292,7 @@ int cmd_export_tarball(const options_t *o) {
     }
 
     graph_t g;
-    if (resolve_targets(packages, (const char *const *)o->args.v, o->args.n, &g) != 0) {
+    if (resolve_targets(packages, targets, ntargets, &g) != 0) {
         free(packages);
         free(nest);
         return 1;
@@ -273,9 +302,9 @@ int cmd_export_tarball(const options_t *o) {
      * archive, it does not get one of its own. */
     strlist_t wanted;
     strlist_init(&wanted);
-    for (size_t i = 0; i < o->args.n; i++) {
+    for (size_t i = 0; i < ntargets; i++) {
         char key[512];
-        if (target_key(o->args.v[i], RETROLUNAR_DEFAULT_SYSTEM, key, sizeof key) == 0)
+        if (target_key(targets[i], RETROLUNAR_DEFAULT_SYSTEM, key, sizeof key) == 0)
             strlist_add(&wanted, key);
     }
 
@@ -384,6 +413,7 @@ int cmd_export_tarball(const options_t *o) {
     free(work);
     free(sums_path);
     strlist_free(&wanted);
+    strlist_free(&from_manifest);
     graph_free(&g);
     free(packages);
     free(nest);

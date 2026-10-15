@@ -16,6 +16,7 @@ static const char *base_of(const char *path) {
 int manifest_find(const char *dir, manifest_t *out) {
     memset(out, 0, sizeof *out);
     strlist_init(&out->shell_deps);
+    strlist_init(&out->deps);
 
     char *where = NULL;
     if (dir != NULL) {
@@ -42,6 +43,16 @@ int manifest_find(const char *dir, manifest_t *out) {
         return -1;
     }
     toml_datum_t root = toml_doc_root(&doc);
+
+    /* The manifest is a recipe, so `deps` at the top level are the packages the
+     * project hands over - what `export` and `export-tarball` release when they
+     * are pointed at a project rather than at package names. */
+    if (toml_opt_strarray(root, "deps", &out->deps) != 0) {
+        toml_doc_free(&doc);
+        free(file);
+        free(where);
+        return -1;
+    }
 
     toml_datum_t shell = toml_opt_table(root, "shell");
     if (shell.type != TOML_UNKNOWN) {
@@ -126,5 +137,6 @@ void manifest_free(manifest_t *m) {
     free(m->file);
     free(m->name);
     strlist_free(&m->shell_deps);
+    strlist_free(&m->deps);
     memset(m, 0, sizeof *m);
 }
