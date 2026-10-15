@@ -24,8 +24,14 @@ const char *cmd_name(enum cmd c) {
 }
 
 /* A flag that needs the next argument, else the message names it. Returns the
- * value, or NULL when the argument is missing (already reported). */
+ * value, or NULL when the argument is missing (already reported). A value
+ * written with '=' (--cores=1) was split off before this ran and is used first,
+ * so a flag taking a value accepts both spellings without saying so. */
+static const char *inline_value = NULL; /* the current "--name=value"'s value */
+
 static const char *value_of(int argc, char **argv, int *i, const char *flag) {
+    if (inline_value != NULL)
+        return inline_value;
     if (*i + 1 >= argc) {
         fprintf(stderr, "retrolunar: %s wants a value\n", flag);
         return NULL;
@@ -51,7 +57,24 @@ int cli_parse(int argc, char **argv, options_t *o) {
     strlist_init(&o->args);
 
     for (int i = 1; i < argc; i++) {
+        /* A long option may carry its value with '=' or in the next argument:
+         * "--cores=1" and "--cores 1" mean the same thing, and so for every
+         * other option that takes one. The name is cut off here and the value
+         * left for value_of to pick up, which is why the check is in one place.
+         * A long option with no '=' is left exactly as it came. */
+        static char name_only[128];
         const char *a = argv[i];
+        inline_value = NULL;
+        if (a[0] == '-' && a[1] == '-' && strlen(a) < sizeof name_only) {
+            const char *eq = memchr(a, '=', strlen(a));
+            if (eq != NULL) {
+                size_t n = (size_t)(eq - a);
+                memcpy(name_only, a, n);
+                name_only[n] = '\0';
+                a = name_only;
+                inline_value = eq + 1;
+            }
+        }
         if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
             o->help = 1;
             continue;
