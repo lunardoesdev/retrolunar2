@@ -163,6 +163,15 @@ static int is_static_archive(const char *n) {
     return l > 2 && strcmp(n + l - 2, ".a") == 0;
 }
 
+/* An Android archive is a zip holding a native library and its Java side: no
+ * rule above matches it, yet for an Android consumer it is the file the package
+ * exists to hand over - ffmpeg-kit-next's .aar is the whole point of building
+ * it here. It is a file the package produced, so it is shipped. */
+static int is_android_archive(const char *n) {
+    size_t l = strlen(n);
+    return l > 4 && strcmp(n + l - 4, ".aar") == 0;
+}
+
 /* Every regular file under bin/, lib/, lib64/ that could be shipped: a library
  * (shared or static), or - for a target that was named, not for its
  * dependencies - a program. A prefix of .a files is what a library-only package
@@ -184,7 +193,7 @@ static void add_artifacts(const char *pkgdir, bundle_t *b, int with_programs) {
                     continue;
                 }
                 const char *n = names.v[i];
-                int lib = is_shared_library(n) || is_static_archive(n);
+                int lib = is_shared_library(n) || is_static_archive(n) || is_android_archive(n);
                 int exe = with_programs && access(full, X_OK) == 0;
                 if ((lib || exe) && !strlist_has(&b->files, full))
                     strlist_add(&b->files, full);
