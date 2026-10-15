@@ -5,13 +5,18 @@
 
 #include "config.h"
 
-/* The project's own manifest, when the run has one. */
-static const char *local_file = NULL;
-static const char *local_name = NULL;
+/* The project's own manifest, when the run has one. The strings are copied, not
+ * borrowed: a caller registers its manifest and then frees it (`export` and
+ * `export-tarball` do), so a borrowed pointer here would dangle by the time
+ * resolution reads it and name whatever the freed heap was reused for. */
+static char *local_file = NULL;
+static char *local_name = NULL;
 
 void resolve_set_local(const char *file, const char *name) {
-    local_file = file;
-    local_name = name;
+    free(local_file);
+    free(local_name);
+    local_file = file != NULL ? xstrdup(file) : NULL;
+    local_name = name != NULL ? xstrdup(name) : NULL;
 }
 
 
