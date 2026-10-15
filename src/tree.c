@@ -9,6 +9,15 @@
 
 #define SYSTEM_PREFIX "system@"
 
+/* --refresh-packages: move the tree forward before it is handed to a command,
+ * once, in tree_packages(). A run that is asked to refresh and cannot is still
+ * a run that reads the tree it has: the message is the warning. */
+static int refresh_trees = 0;
+
+void tree_refresh_enable(void) {
+    refresh_trees = 1;
+}
+
 char *default_under_home(const char *leaf) {
     const char *home = getenv("HOME");
     if (home == NULL || home[0] == '\0')
@@ -35,6 +44,8 @@ char *tree_packages(const char *given) {
                 free(abs);
                 return NULL;
             }
+            if (refresh_trees)
+                repo_refresh(abs);
             return abs;
         }
         strlist_t roots;
@@ -92,6 +103,8 @@ char *tree_packages(const char *given) {
             return NULL;
         }
     }
+    if (refresh_trees)
+        repo_refresh(dir);
     return dir;
 }
 

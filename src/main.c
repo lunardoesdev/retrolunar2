@@ -14,6 +14,7 @@
 #include "lock.h"
 #include "manifest.h"
 #include "repos.h"
+#include "tree.h"
 
 /* Commands that arrive in the phases PLAN.md lays out (P1 resolver, P2 script
  * emitter and environment, P3 state, P5 env and export). */
@@ -42,6 +43,10 @@ int main(int argc, char **argv) {
         cli_free(&o);
         return 0;
     }
+    /* --refresh-packages: whichever tree the command is about to use, move it
+     * forward first. The tree itself can be moved by `update-recipes`. */
+    if (o.refresh_packages)
+        tree_refresh_enable();
 
     /* Where packages come from. `--packages DIR` (or a list, separated by
      * colons) is what the caller said, and wins. Without it, a manifest's
@@ -97,6 +102,9 @@ int main(int argc, char **argv) {
         break;
     case CMD_CACHE:
         status = cmd_cache(&o);
+        break;
+    case CMD_UPDATE_RECIPES:
+        status = cmd_update_recipes(&o);
         break;
     case CMD_BUILD:
         status = cmd_build(&o);

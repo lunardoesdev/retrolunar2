@@ -163,6 +163,9 @@ runtime path is rewritten to match the flat layout, and anything unresolved is l
 --out DIR        where build installs the package (also --to)
 --repo NAME=URL[@REV]   a repository to resolve against; repeatable
 --no-default-repo       do not search the built-in repository
+--refresh-packages      move the tree forward before using it: fetch, then a
+                        fast-forward pull (`update-recipes` does the same for the
+                        tree on its own)
 --no-rpath       export: do not bake an $ORIGIN rpath into ELF files
 ```
 

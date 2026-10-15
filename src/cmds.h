@@ -14,5 +14,6 @@ int cmd_shell(const options_t *o);
 int cmd_build(const options_t *o);
 int cmd_gc(const options_t *o);
 int cmd_cache(const options_t *o);
+int cmd_update_recipes(const options_t *o);
 
 #endif /* RETROLUNAR_CMDS_H */

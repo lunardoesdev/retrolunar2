@@ -12,6 +12,7 @@ static const struct {
     {"install", CMD_INSTALL}, {"generate", CMD_GENERATE}, {"deps", CMD_DEPS},
     {"search", CMD_SEARCH},   {"env", CMD_ENV},           {"export", CMD_EXPORT},
     {"shell", CMD_SHELL},     {"run", CMD_RUN},           {"build", CMD_BUILD},   {"gc", CMD_GC},      {"cache", CMD_CACHE},
+    {"update-recipes", CMD_UPDATE_RECIPES},
 };
 
 const char *cmd_name(enum cmd c) {
@@ -96,6 +97,10 @@ int cli_parse(int argc, char **argv, options_t *o) {
             o->no_default_repo = 1;
             continue;
         }
+        if (strcmp(a, "--refresh-packages") == 0) {
+            o->refresh_packages = 1;
+            continue;
+        }
         if (strcmp(a, "--out") == 0 || strcmp(a, "--to") == 0) {
             o->to = value_of(argc, argv, &i, a);
             if (o->to == NULL)
@@ -178,6 +183,8 @@ void cli_usage(FILE *out, const char *prog) {
             "            them from it instead of building them (--cache DIR|URL).\n"
             "  export    collect a target, its binaries and libraries and those\n"
             "            of everything it depends on, flat, into --to DIR.\n"
+            "  update-recipes  move the packages tree forward: fetch, then a\n"
+            "            fast-forward pull; a tree that is not a checkout is told so.\n"
             "\n"
             "Options:\n"
             "  --packages DIR   packages tree to resolve recipes from; defaults to\n"
@@ -193,6 +200,7 @@ void cli_usage(FILE *out, const char *prog) {
             "            the last @ separates a revision. Repositories are searched in\n"
             "            the order they are declared, the built-in `default` last.\n"
             "  --no-default-repo     do not search the built-in repository\n"
+            "  --refresh-packages    move the tree forward before using it\n"
             "  --no-rpath       export: do not bake an $ORIGIN rpath into ELF files\n"
             "  -h, --help       show this help and exit\n"
             "\n"

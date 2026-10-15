@@ -19,7 +19,8 @@ enum cmd {
     CMD_RUN,
     CMD_BUILD,
     CMD_GC,
-    CMD_CACHE
+    CMD_CACHE,
+    CMD_UPDATE_RECIPES
 };
 
 typedef struct {
@@ -31,6 +32,7 @@ typedef struct {
     const char *cache;    /* --cache DIR|URL, for cache push and pull */
     strlist_t repos;      /* --repo NAME=URL[@REV], repeatable */
     int no_default_repo;  /* --no-default-repo */
+    int refresh_packages; /* --refresh-packages */
     int cores;            /* --cores N, defaults to 1 */
     int execute;          /* -x */
     int rpath;            /* 0 when --no-rpath was given */

@@ -62,6 +62,38 @@ int repo_clone(const char *url, const char *dir) {
     return run(argv);
 }
 
+/* Move a checkout forward and stop there: fetch, then a fast-forward pull. A
+ * dirty tree, or one whose branch has diverged, fails the pull and is left
+ * exactly as it was - a refresh is not a licence to rewrite someone's work. */
+int repo_refresh(const char *dir) {
+    char *git = path_join(dir, ".git");
+    int have = is_dir(git);
+    free(git);
+    if (!have) {
+        fprintf(stderr,
+                "retrolunar: %s is not a git checkout, so there is nothing to pull\n"
+                "  a tree that a project keeps is updated where it is kept\n",
+                dir);
+        return -1;
+    }
+    char *fetch[] = {(char *)"git", (char *)"-C", (char *)dir,
+                     (char *)"fetch", (char *)"--quiet", (char *)"--all", NULL};
+    if (run(fetch) != 0) {
+        fprintf(stderr, "retrolunar: cannot fetch in %s\n", dir);
+        return -1;
+    }
+    char *pull[] = {(char *)"git", (char *)"-C", (char *)dir, (char *)"pull",
+                    (char *)"--quiet", (char *)"--ff-only", NULL};
+    if (run(pull) != 0) {
+        fprintf(stderr,
+                "retrolunar: cannot fast-forward %s - local changes or a diverged\n"
+                "  branch stay as they are\n",
+                dir);
+        return -1;
+    }
+    return 0;
+}
+
 /* Where a named repository is kept between runs. Repositories are shared state,
  * not project state: one clone serves every project that names it. */
 static char *clone_dir(const char *name) {

@@ -48,4 +48,8 @@ char *tree_root_with_entry(const char *roots, const char *name, const char *entr
  * generic.toml, a source.toml or a system.toml. */
 int tree_is_entry(const char *dir);
 
+/* Ask every later tree_packages() call to refresh the tree it is about to use,
+ * before it is used. Set once from the command line: --refresh-packages. */
+void tree_refresh_enable(void);
+
 #endif /* RETROLUNAR_TREE_H */

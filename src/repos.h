@@ -25,4 +25,9 @@ char *repos_search_path(const manifest_t *m, const strlist_t *cli, int no_defaul
  * tree, which keeps its own directory rather than a repository entry. */
 int repo_clone(const char *url, const char *dir);
 
+/* Update a checkout in place: fetch, then a fast-forward pull that fails rather
+ * than merges, so local work is never rewritten. 0 on success; a directory that
+ * is not a checkout is reported and returns -1. */
+int repo_refresh(const char *dir);
+
 #endif /* RETROLUNAR_REPOS_H */
