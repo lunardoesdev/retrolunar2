@@ -41,10 +41,6 @@ inside it has to be rewritten to record a build. A package is rebuilt when
   file names the tool that wrote it, so a state written by another tool is not an answer
   about what this one would build. An upgraded tool rebuilds; it does not inherit.
 
-`tests/hashes.sh` is that list as something that runs: as it stands, a new file in the
-system's directory, the same file taken away, an unused file in the package's own directory,
-the build file that wins changing, and a state file written by another tool.
-
 There is one shortcut, and it is timestamps: when nothing that feeds a node is newer than
 its state file, the stored fingerprint is taken as it is instead of hashing the inputs
 again. A restored timestamp can slip past it, which is what `RETROLUNAR_VERIFY=1` is for.

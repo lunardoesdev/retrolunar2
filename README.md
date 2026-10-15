@@ -91,25 +91,5 @@ code the generated script uses. Inside a project, `run` and `shell` do it for yo
 src/                 the tool
 vendor/tomlc17/      vendored TOML parser (MIT)
 tools/lua2toml.py    the port from v1 (Lua recipes to TOML), with its own report
-tests/               the acceptance run
 docs/                how to use it
 ```
-
-## Tests
-
-```sh
-tests/run.sh
-```
-
-It builds the tool, regenerates the ported tree from the v1 sources when they are next to
-this one, adapts the native system to this host, resolves every package on three systems,
-builds `pngprobe@clang-native` through four build systems (cmake, autoconf, meson, cargo),
-moves the nest aside and asks the moved entries for their own files, exports a bundle and
-runs it, and then checks the freshness rules with `tests/hashes.sh`: any file in a system's
-directory makes every package of that system stale, an unused file in a package's own
-directory changes nothing, a change to the build file that wins rebuilds that package and
-everything downstream, and a state file written by another tool is rebuilt rather than
-believed. It then builds a project of its own: its manifest, its repository, its
-environment, `build --out`, a second version of the same package keeping its own store
-entry, `gc`, and the cache — an entry built in one nest and run from another, and a
-tampered entry refused.
