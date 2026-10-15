@@ -30,4 +30,10 @@ int repo_clone(const char *url, const char *dir);
  * is not a checkout is reported and returns -1. */
 int repo_refresh(const char *dir);
 
+/* Run a program and wait for it: 0 on success, its exit status otherwise, -1
+ * when it could not be started. No shell, so no word splitting to worry about.
+ * It lives here because cloning and updating a repository were the first things
+ * that needed it; export-tarball needs it for cp, tar and gzip. */
+int run_cmd(char *const argv[]);
+
 #endif /* RETROLUNAR_REPOS_H */

@@ -13,6 +13,7 @@ static const struct {
     {"search", CMD_SEARCH},   {"env", CMD_ENV},           {"export", CMD_EXPORT},
     {"shell", CMD_SHELL},     {"run", CMD_RUN},           {"build", CMD_BUILD},   {"gc", CMD_GC},      {"cache", CMD_CACHE},
     {"update-recipes", CMD_UPDATE_RECIPES},
+    {"export-tarball", CMD_EXPORT_TARBALL},
 };
 
 const char *cmd_name(enum cmd c) {
@@ -185,6 +186,10 @@ void cli_usage(FILE *out, const char *prog) {
             "            of everything it depends on, flat, into --to DIR.\n"
             "  update-recipes  move the packages tree forward: fetch, then a\n"
             "            fast-forward pull; a tree that is not a checkout is told so.\n"
+            "  export-tarball  the release: pack each named target and its\n"
+            "            dependencies. --to FILE (any name with a dot in it) packs\n"
+            "            one target into exactly that file; --to DIR (default dist)\n"
+            "            packs each target as <pack>-<sys>.tar.gz beside SHA256SUMS.\n"
             "\n"
             "Options:\n"
             "  --packages DIR   packages tree to resolve recipes from; defaults to\n"

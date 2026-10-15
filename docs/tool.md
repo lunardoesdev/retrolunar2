@@ -166,6 +166,10 @@ runtime path is rewritten to match the flat layout, and anything unresolved is l
 --refresh-packages      move the tree forward before using it: fetch, then a
                         fast-forward pull (`update-recipes` does the same for the
                         tree on its own)
+--to FILE|DIR   export-tarball: a name with a dot in its last component is the
+                archive to write - release.tar.gz, release.toml, whatever the
+                caller wants - and it takes one target. A directory packs each
+                target as <pack>-<sys>.tar.gz beside a SHA256SUMS instead.
 --no-rpath       export: do not bake an $ORIGIN rpath into ELF files
 ```
 

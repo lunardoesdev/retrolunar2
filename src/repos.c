@@ -40,6 +40,10 @@ static char *expand_home(const char *p) {
 }
 
 static int run(char *const argv[]) {
+    return run_cmd(argv);
+}
+
+int run_cmd(char *const argv[]) {
     pid_t pid = fork();
     if (pid < 0)
         return -1;

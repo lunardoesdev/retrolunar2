@@ -106,6 +106,9 @@ int main(int argc, char **argv) {
     case CMD_UPDATE_RECIPES:
         status = cmd_update_recipes(&o);
         break;
+    case CMD_EXPORT_TARBALL:
+        status = cmd_export_tarball(&o);
+        break;
     case CMD_BUILD:
         status = cmd_build(&o);
         break;

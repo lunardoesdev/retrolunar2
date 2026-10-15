@@ -20,7 +20,8 @@ enum cmd {
     CMD_BUILD,
     CMD_GC,
     CMD_CACHE,
-    CMD_UPDATE_RECIPES
+    CMD_UPDATE_RECIPES,
+    CMD_EXPORT_TARBALL
 };
 
 typedef struct {

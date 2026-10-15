@@ -46,6 +46,7 @@ retrolunar_sources = files(
   'src/repos.c',
   'src/cmd_cache.c',
   'src/cmd_update_recipes.c',
+  'src/cmd_export_tarball.c',
   'src/lock.c',
   'src/bin.c',
 )
