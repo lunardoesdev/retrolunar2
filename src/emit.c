@@ -11,6 +11,7 @@
 #include "env.h"
 #include "fingerprint.h"
 #include "system.h"
+#include "tree.h"
 
 /* The run's output override, when there is one: see emit_script_string_out. */
 static const char *g_out_key = NULL;
@@ -172,9 +173,23 @@ static void emit_prelude(const graph_t *g, size_t i, const char *fp, FILE *out) 
             "    export OUTPKG PREFIX RECIPEDIR DESTDIR\n",
             out_line);
     if (strcmp(p->sys, "source") != 0) {
-        char *sysdir = xmalloc(strlen(p->sys) + 8);
-        sprintf(sysdir, "system@%s", p->sys);
-        fprintf(out, "    SYSDIR=\"$PACKAGEDIR/%s\"\n    export SYSDIR\n", sysdir);
+        /* A system's directory is the one repository that defines it, not every
+         * root joined: with more than one tree (--repo, a manifest) PACKAGEDIR is
+         * a list, and "$PACKAGEDIR/system@<sys>" then named a path that does not
+         * exist - cmake reported the joined pair back as a toolchain file it
+         * could not find. When no root defines the system, SYSDIR is left unset,
+         * which the driver then reports as an unbound name rather than as a
+         * directory that looks plausible. */
+        char *sysdir = str_concat("system@", p->sys);
+        char *root = tree_root_with_entry(g->packages, sysdir, "system.toml");
+        if (root != NULL) {
+            char *dir = path_join(root, sysdir);
+            free(root);
+            char *q = sq(dir);
+            fprintf(out, "    SYSDIR=%s\n    export SYSDIR\n", q);
+            free(q);
+            free(dir);
+        }
         free(sysdir);
     }
     free(outpkg);
