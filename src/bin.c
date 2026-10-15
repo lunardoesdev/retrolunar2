@@ -421,6 +421,19 @@ int bin_name_is_platform(const char *name) {
         /* bionic, and the NDK's own runtime libraries */
         "libc.so", "libm.so", "libdl.so", "liblog.so", "libandroid.so",
         "libstdc++.so", "libc++_shared.so", "libunwind.so", "libz.so",
+        /* Android's system libraries: on every device at the API level a build
+         * was linked against, and never something to ship. The names are the
+         * union of what the NDK's sysroot offers at every level
+         * (sysroot/usr/lib/<triple>/<api>/*.so), taken from it rather than
+         * guessed, so a library the device has is not reported as
+         * "NOT FOUND anywhere in <nest>" and counted as unresolved. Without
+         * them an FFmpeg hand-over looked broken: libavdevice names
+         * libmediandk.so and libcamera2ndk.so, and both came out unresolved. */
+        "libaaudio.so", "libamidi.so", "libbinder_ndk.so", "libcamera2ndk.so",
+        "libc++.so", "libEGL.so", "libGLESv1_CM.so", "libGLESv2.so",
+        "libGLESv3.so", "libicu.so", "libjnigraphics.so", "libmediandk.so",
+        "libnativehelper.so", "libnativewindow.so", "libneuralnetworks.so",
+        "libOpenMAXAL.so", "libOpenSLES.so", "libsync.so", "libvulkan.so",
         "ld-android.so", "libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0",
         "librt.so.1", "libgcc_s.so", "libgcc_s.so.1", "libutil.so.1",
         /* the dynamic loader itself: every binary names it, none ships it */
