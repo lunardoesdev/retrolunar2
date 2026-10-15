@@ -3,19 +3,19 @@
 #
 #   tests/run.sh
 #
-# It regenerates the ported tree from the v1 sources when they are present,
-# builds the tool, builds the test chain through four build systems, and checks
-# freshness, export and the freshness rules. Overridable:
+# It builds the tool, builds the test chain through four build systems, and
+# checks freshness, export and the freshness rules. It never runs the v1 Lua
+# port and never reads the Lua tree: the tree it tests is the one it is pointed
+# at, and packages whose dependencies are not there yet are skipped rather than
+# reported. Overridable:
 #
-#   PACKAGES=../retrolunar2-packages   the ported tree it installs into
-#   SOURCES=../retrolunar-packages     v1 sources, when porting
+#   PACKAGES=../retrolunar2-packages   the tree it tests
 #   WORK=$(mktemp -d)                  everything temporary
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(CDPATH= cd -- "$here/.." && pwd)
 PACKAGES=${PACKAGES:-$root/../retrolunar2-packages}
-SOURCES=${SOURCES:-$root/../retrolunar-packages}
 WORK=${WORK:-$(mktemp -d "${TMPDIR:-/tmp}/retrolunar-test-XXXXXX")}
 NEST=$WORK/nest
 CHAIN='pngprobe@clang-native'
@@ -30,28 +30,10 @@ RL=$root/builddir/retrolunar
 "$RL" --help >/dev/null
 echo "built $RL"
 
-if [ -d "$SOURCES" ]; then
-    echo "=== port from $SOURCES ==="
-    python3 "$root/tools/lua2toml.py" packages "$SOURCES" "$WORK/pkg" \
-        --report "$WORK/pkg/PORTING.md" 2>&1 | tail -1
-    python3 "$root/tools/lua2toml.py" systems "$SOURCES" "$WORK/sys" \
-        --report "$WORK/sys/PORTING.md" --uses "$WORK/pkg/.port-uses.json" 2>&1 | tail -1
-    rm -rf "$PACKAGES"/system@*
-    cp -rf "$WORK"/sys/system@* "$PACKAGES/"
-    for d in "$WORK"/pkg/*/; do
-        n=$(basename "$d")
-        rm -rf "$PACKAGES/$n"
-        cp -rf "$d" "$PACKAGES/$n"
-    done
-    cp "$WORK/pkg/PORTING.md" "$PACKAGES/PORTING.md" 2>/dev/null || true
-    cp "$WORK/sys/PORTING.md" "$PACKAGES/PORTING-systems.md" 2>/dev/null || true
-    echo "installed $(ls -d "$PACKAGES"/system@* | wc -l) systems and $(ls "$PACKAGES" | grep -vc 'system@\|PORTING\|README\|^\.') packages"
-fi
-
 echo "=== the native system has to match this host ==="
-# The v1 native system names llvm's tools, which this host has as GNU ones; and
-# it carries no probes. Both are host facts, so the test states them here rather
-# than pretending the ported file is what a build on this machine uses.
+# The native system names llvm's tools, which this host has as GNU ones; and it
+# carries no probes. Both are host facts, so the test states them here rather
+# than pretending the system file is what a build on this machine uses.
 # Ask the tool what a bare target resolves to: that is the native system, and it
 # checks the default at the same time.
 native=$("$RL" deps --packages "$PACKAGES" zlib | tail -1 | sed 's/.*@//')
@@ -78,8 +60,8 @@ for d in "$PACKAGES"/*/; do
     case "$pkg" in system@*) continue;; esac
     n=$((n+1))
     if ! "$RL" generate --packages "$PACKAGES" --nest "$WORK/parse" -o "$WORK/parse.sh" "$pkg@$native" >"$WORK/parse.err" 2>&1; then
-        # A dependency the tree does not have yet is the port's queue, not a
-        # defect: the resolution step reports those. A script that will not parse
+        # A dependency the tree does not have yet is not a defect - the
+        # resolution step reports those. A script that will not parse
         # is a defect, because one of them stops every target beside it.
         if grep -qiE "no package|no recipe for system|no system" "$WORK/parse.err"; then
             skipped=$((skipped+1))
