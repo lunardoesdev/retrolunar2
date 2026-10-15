@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "config.h"
+#include "repos.h"
 
 #define SYSTEM_PREFIX "system@"
 
@@ -72,14 +73,24 @@ char *tree_packages(const char *given) {
         return out;
     }
     char *dir = default_under_home("packages");
-    if (dir == NULL || !is_dir(dir)) {
-        fprintf(stderr,
-                "retrolunar: no packages tree at %s\n"
-                "  pass --packages DIR, or clone %s there\n",
-                dir != NULL ? dir : "$HOME/.cache/retrolunar/packages",
-                RETROLUNAR_PACKAGES_REPO);
-        free(dir);
+    if (dir == NULL) {
+        fprintf(stderr, "retrolunar: no $HOME to keep a packages tree in\n");
         return NULL;
+    }
+    if (!is_dir(dir)) {
+        /* The tool ships with a tree, not with a copy of it, so a project gets a
+         * fresh clone: asked for once, then kept like any other tree. Naming the
+         * built-in repository in an error message helped nobody. */
+        printf("retrolunar: fetching the built-in packages tree from %s\n",
+               RETROLUNAR_PACKAGES_REPO);
+        if (repo_clone(RETROLUNAR_PACKAGES_REPO, dir) != 0 || !is_dir(dir)) {
+            fprintf(stderr,
+                    "retrolunar: no packages tree at %s, and %s could not be cloned\n"
+                    "  pass --packages DIR\n",
+                    dir, RETROLUNAR_PACKAGES_REPO);
+            free(dir);
+            return NULL;
+        }
     }
     return dir;
 }

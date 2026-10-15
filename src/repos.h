@@ -21,4 +21,8 @@
  * NULL when nothing could be used (the reason is on stderr). */
 char *repos_search_path(const manifest_t *m, const strlist_t *cli, int no_default);
 
+/* `git clone --quiet URL DIR`, 0 on success. Exposed for the built-in packages
+ * tree, which keeps its own directory rather than a repository entry. */
+int repo_clone(const char *url, const char *dir);
+
 #endif /* RETROLUNAR_REPOS_H */

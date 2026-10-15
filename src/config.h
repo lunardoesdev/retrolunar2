@@ -7,7 +7,7 @@
 #define RETROLUNAR_DEFAULT_SYSTEM "clang-native"
 #endif
 
-#define RETROLUNAR_PACKAGES_REPO "https://github.com/lunardoesdev/retrolunar-packages"
+#define RETROLUNAR_PACKAGES_REPO "https://github.com/lunardoesdev/retrolunar2-packages"
 
 /* The built-in repository follows its own default branch: the tool ships with a
  * tree, not with a copy of it, so a fresh clone is what a project gets. The

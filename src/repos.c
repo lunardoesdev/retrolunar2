@@ -53,6 +53,15 @@ static int run(char *const argv[]) {
     return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
 }
 
+/* `git clone --quiet URL DIR`, 0 on success. For callers that keep their own
+ * directory: the built-in packages tree is a tree, not a repository of a
+ * project, and it lives at $HOME/.cache/retrolunar/packages. */
+int repo_clone(const char *url, const char *dir) {
+    char *argv[] = {(char *)"git", (char *)"clone", (char *)"--quiet",
+                    (char *)url,   (char *)dir,   NULL};
+    return run(argv);
+}
+
 /* Where a named repository is kept between runs. Repositories are shared state,
  * not project state: one clone serves every project that names it. */
 static char *clone_dir(const char *name) {

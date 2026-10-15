@@ -155,7 +155,7 @@ runtime path is rewritten to match the flat layout, and anything unresolved is l
 ```
 --packages DIR   packages tree to resolve recipes from; defaults to
                  $HOME/.cache/retrolunar/packages, cloned from the built-in
-                 repository on first use
+                 repository (retrolunar2-packages) on first use
 --nest DIR       output root; defaults to $HOME/.cache/retrolunar/nestdir
 --cores N        job count for recipes that honour $CORES (default 1)
 -o, --output F   write the script to F (generate, build)
